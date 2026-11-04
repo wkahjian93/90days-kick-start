@@ -1,5 +1,5 @@
 // Network first and always revalidated, so phones get updates as soon as they are online; falls back to the cache offline.
-const CACHE = 'kick-start-v1';
+const CACHE = 'kick-start-v2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'syllabus.js', 'logic.js', 'core.js', 'demo.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg'];
 self.addEventListener('install', e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); });
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
