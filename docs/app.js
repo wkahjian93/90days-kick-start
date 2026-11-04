@@ -91,7 +91,7 @@
     $app.innerHTML = '<div class="login"><div class="box">' +
       '<div class="mark">90</div><h2>Days Kick Start</h2>' +
       '<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
-      (API ? '<input id="code" placeholder="Enter your sign-in code" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
+      (API ? '<input id="code" placeholder="Leader code or agent code" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
         '<div class="err" id="err">' + esc(msg || '') + '</div>' +
         '<button class="btn gold" id="go">Sign in</button>' +
         '<button class="btn ghost" id="demo" style="background:transparent;color:#fff;border-color:#3a3a3a">Try the sample (made-up agents)</button>'
