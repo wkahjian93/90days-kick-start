@@ -35,15 +35,29 @@ a { color: var(--blue); }
 .btn-row .btn { flex: 1 1 auto; }
 
 /* login */
-.login { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 24px 16px; background: radial-gradient(1200px 500px at 50% -10%, #2a2410 0%, var(--ink) 60%); color: #fff; }
+/* sign-in: team photo along the bottom, fading into the photo's own grey at the top */
+.login { min-height: 100vh; display: flex; flex-direction: column; padding: calc(env(safe-area-inset-top) + 28px) 16px calc(40vh + 16px); color: var(--ink);
+  background: linear-gradient(#E1DFE0 0%, #E1DFE0 52%, rgba(225,223,224,0) 64%), url(team.jpg) center bottom / auto 42vh no-repeat, #E1DFE0; }
+@media (min-aspect-ratio: 3/2) { .login { background-size: auto, auto 46vh, auto; } }
 .login .box { max-width: 400px; width: 100%; margin: 0 auto; }
-.login .mark { font: 700 54px/1 var(--serif); color: var(--gold); }
-.login h2 { font: 600 30px/1.15 var(--serif); margin: 6px 0 8px; }
-.login p { color: #C9C3B5; margin: 0 0 22px; }
-.login input { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #3a3a3a; background: #15161b; color: #fff; font-size: 17px; letter-spacing: .06em; margin-bottom: 12px; }
+.login .brandlogo { height: 58px; display: block; margin-bottom: 18px; }
+.login .mark { font: 700 50px/1 var(--serif); color: var(--gold-d); }
+.login h2 { font: 600 28px/1.15 var(--serif); margin: 4px 0 6px; }
+.login p { color: var(--muted); margin: 0 0 18px; }
+.login input { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #D5D2CC; background: #fff; color: var(--ink); font-size: 17px; letter-spacing: .06em; margin-bottom: 10px; }
 .login .btn { width: 100%; margin-bottom: 10px; }
-.login .err { color: #FFB4A8; min-height: 20px; font-size: 14px; }
-.login .fine { font-size: 12px; color: #8E8879; margin-top: 18px; }
+.login .btn.ghost { background: rgba(255,255,255,.7); }
+.login .err { color: var(--red); min-height: 20px; font-size: 14px; }
+.login .fine { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+/* team photo banner on the dashboards */
+.hero { position: relative; border-radius: var(--r); overflow: hidden; min-height: 190px; display: flex; align-items: flex-end; padding: 14px 16px; margin-bottom: 14px;
+  background: linear-gradient(180deg, rgba(11,12,16,0) 38%, rgba(11,12,16,.9) 74%), url(team.jpg) center 12% / cover, #E1DFE0; color: #fff; }
+@media (min-width: 700px) { .hero { min-height: 230px; background-size: auto, 100% auto, auto; background-position: 0 0, center 18%, 0 0; } }
+.hero img { height: 38px; filter: brightness(0) invert(1); margin-right: 12px; }
+.hero b { display: block; font: 600 19px/1.2 var(--serif); }
+.hero span { font-size: 12.5px; color: var(--gold); letter-spacing: .06em; text-transform: uppercase; }
+.top .brand { height: 26px; width: auto; filter: brightness(0) invert(1); flex: none; }
 
 /* stat tiles */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -88,7 +102,7 @@ a { color: var(--blue); }
 .chip.goal { background: var(--purple-bg); color: var(--purple); }
 
 /* agent header */
-.ahead { background: var(--ink); color: #fff; padding: 14px 16px 16px; }
+.ahead { background: linear-gradient(90deg, rgba(11,12,16,.94) 0%, rgba(11,12,16,.82) 60%, rgba(11,12,16,.6) 100%), url(team.jpg) center 22% / cover, var(--ink); color: #fff; padding: 14px 16px 16px; }
 .ahead .inner { max-width: 1100px; margin: 0 auto; display: flex; gap: 14px; align-items: center; }
 .ring { width: 66px; height: 66px; flex: none; position: relative; }
 .ring svg { transform: rotate(-90deg); }

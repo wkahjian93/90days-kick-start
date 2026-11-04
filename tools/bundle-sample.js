@@ -14,6 +14,10 @@ html = html
     if (f === 'app.js') js = js.replace(/\n\s*if \('serviceWorker'[^\n]*/, '');
     return '<script>\n' + js.replace(/<\/script/gi, '<\\/script') + '\n</script>';
   });
+// The sample page can't load its own image files, so the images go in as data URIs.
+const uri = (f, type) => 'data:' + type + ';base64,' + fs.readFileSync(path.join(__dirname, '..', 'docs', f)).toString('base64');
+const team = uri('team.jpg', 'image/jpeg'), logo = uri('logo.png', 'image/png'), mark = uri('mark.png', 'image/png');
+html = html.split('url(team.jpg)').join('url(' + team + ')').split('src="logo.png"').join('src="' + logo + '"').split('src="mark.png"').join('src="' + mark + '"');
 const out = path.join(__dirname, '..', 'sample', '90Days Kick Start sample.html');
 fs.mkdirSync(path.dirname(out), {recursive: true});
 fs.writeFileSync(out, html);

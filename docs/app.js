@@ -89,12 +89,13 @@
   function renderLogin(msg) {
     st.screen = 'login';
     $app.innerHTML = '<div class="login"><div class="box">' +
+      '<img class="brandlogo" src="logo.png" alt="REDEFINE">' +
       '<div class="mark">90</div><h2>Days Kick Start</h2>' +
       '<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
       (API ? '<input id="code" placeholder="Leader code or agent code" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
         '<div class="err" id="err">' + esc(msg || '') + '</div>' +
         '<button class="btn gold" id="go">Sign in</button>' +
-        '<button class="btn ghost" id="demo" style="background:transparent;color:#fff;border-color:#3a3a3a">Try the sample (made-up agents)</button>'
+        '<button class="btn ghost" id="demo">Try the sample (made-up agents)</button>'
       : '<button class="btn gold" id="demo">Open the sample (no code needed)</button>' +
         '<div class="fine">This is a preview with made-up agents. Real sign-in codes start working once the team server is connected.</div>') +
       '<div class="fine">Agents: your leader gives you a personal 8-letter code. Leaders: use your leader code.</div>' +
@@ -154,7 +155,7 @@
   }
 
   function topBar(title, sub, left, right) {
-    return '<div class="top">' + (left || '') + '<h1><small>' + esc(sub) + '</small>' + esc(title) + '</h1>' +
+    return '<div class="top">' + (left || '') + '<img class="brand" src="mark.png" alt="REDEFINE"><h1><small>' + esc(sub) + '</small>' + esc(title) + '</h1>' +
       (st.demo ? '<span class="badge-demo">SAMPLE</span>' : '') + (right || '') + '</div>';
   }
   function agents() { return (st.data && st.data.agents) || []; }
@@ -178,6 +179,7 @@
 
     $app.innerHTML = topBar('Team Progress', '90Days Kick Start', '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       '<div class="wrap">' +
+      '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE · 90Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       '<div class="stats">' +
         '<div class="stat"><b>' + act.length + '</b><span>Active agents</span></div>' +
         '<div class="stat"><b>' + avg + '%</b><span>Average progress</span></div>' +
