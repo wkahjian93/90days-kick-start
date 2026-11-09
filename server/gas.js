@@ -44,7 +44,7 @@ var GAS = (function () {
 
   function cell(v, col) {
     if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Kuala_Lumpur', 'yyyy-MM-dd');
-    if (CORE.JSON_COLS[col]) { try { var j = JSON.parse(v || '[]'); return Array.isArray(j) ? j : []; } catch (e) { return []; } }
+    if (CORE.JSON_COLS[col]) { if (Array.isArray(v)) return v; try { var j = JSON.parse(v || '[]'); return Array.isArray(j) ? j : []; } catch (e) { return []; } }
     if (v === 'TRUE' || v === true) return true;
     if (v === 'FALSE' || v === false) return false;
     return v === null || v === undefined ? '' : (typeof v === 'number' ? v : String(v));

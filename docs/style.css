@@ -130,6 +130,8 @@ a { color: var(--blue); }
 .card .t { font-weight: 600; font-size: 14px; }
 .card .f { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 7px; font-size: 12px; color: var(--muted); }
 .card .f .chip { margin-left: auto; }
+.addcard { width: 100%; border: 1.5px dashed #C9BFA8; background: transparent; color: var(--muted); border-radius: 11px; padding: 9px; font-weight: 600; font-size: 13.5px; cursor: pointer; }
+.addcard:hover { background: rgba(255,255,255,.5); color: var(--ink); }
 
 /* activity */
 .panel { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; }

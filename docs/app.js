@@ -14,7 +14,9 @@
     already_approved: 'This item is already approved. Ask your leader to reset it if you need to change it.', empty_submission: 'Add a note, a file or a tick before submitting.',
     file_type: 'That file type is not accepted. Use a photo, PDF, audio, video or Office file.', file_size: 'A file is too large. Keep each file under 8 MB.',
     too_many_files: 'Too many files. Up to 5 at a time and 10 per item.', unknown_item: 'This syllabus item no longer exists.', not_found: 'Not found. Refresh and try again.',
-    forbidden: 'You do not have access to that.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
+    forbidden: 'You do not have access to that.', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
+    bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
+    invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
   };
 
   /* ---------- helpers ---------- */
@@ -22,7 +24,10 @@
   function fmt(d) { if (!d) return '—'; var x = new Date(d + 'T00:00:00Z'); return x.toLocaleDateString('en-MY', {day: 'numeric', month: 'short', timeZone: 'UTC'}); }
   function fmtTime(iso) { try { return new Date(iso).toLocaleString('en-MY', {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur'}); } catch (e) { return iso; } }
   function today() { return (st.data && st.data.today) || KS.todayMYT(); }
-  function item(id) { return SYLLABUS.filter(function (x) { return x.id === id; })[0]; }
+  function syl() { return (st.data && st.data.syllabus) || SYLLABUS; }
+  var ALL_WEEKS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+  function defaultDue(w) { return w === 0 ? 30 : w >= 12 ? 90 : w * 7; }
+  function item(id) { return syl().filter(function (x) { return x.id === id; })[0]; }
   function wkName(w) { return KS.weekLabel(w, WEEK_NAMES); }
   function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { return null; } }
   function toast(msg, err) {
@@ -165,8 +170,8 @@
   function goTeam() {
     st.screen = 'team';
     var d = st.data, t = today(), act = agents().filter(function (a) { return a.active; });
-    var sums = {}; agents().forEach(function (a) { sums[a.id] = KS.summary(a, SYLLABUS, d.progress, t); });
-    var al = KS.alerts(agents(), SYLLABUS, d.progress, t);
+    var sums = {}; agents().forEach(function (a) { sums[a.id] = KS.summary(a, syl(), d.progress, t); });
+    var al = KS.alerts(agents(), syl(), d.progress, t);
     var avg = act.length ? Math.round(act.reduce(function (s, a) { return s + sums[a.id].pct; }, 0) / act.length) : 0;
     var waiting = act.reduce(function (s, a) { return s + sums[a.id].waiting; }, 0), over = act.reduce(function (s, a) { return s + sums[a.id].overdue; }, 0);
     var shown = st.showAllAlerts ? al : al.slice(0, 8);
@@ -230,12 +235,12 @@
       '<button class="btn ghost" data-m="remind">✉ Email reminders</button>' +
       '<button class="btn ghost" data-m="history">🕘 History</button>' +
       '<button class="btn ghost" data-m="settings">⚙ Settings</button>' +
-      '<button class="btn ghost" data-m="syllabus">📘 Syllabus overview</button>' +
+      '<button class="btn ghost" data-m="syllabus">📘 Edit syllabus</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelectorAll('[data-m]').forEach(function (b) {
         b.onclick = function () {
           close();
-          ({refresh: refresh, remind: reminders, history: goHistory, settings: settings, syllabus: syllabusOverview, out: signOut})[b.dataset.m]();
+          ({refresh: refresh, remind: reminders, history: goHistory, settings: settings, syllabus: syllabusEditor, out: signOut})[b.dataset.m]();
         };
       });
     });
@@ -248,11 +253,14 @@
     var prevY = keepScroll ? window.scrollY : 0;
     if (st.agentId !== id) st.tab = 'board';
     st.screen = 'agent'; st.agentId = id;
-    var d = st.data, t = today(), s = KS.summary(a, SYLLABUS, d.progress, t), pm = KS.progressMap(d.progress, a.id), leader = st.role === 'leader';
+    var d = st.data, t = today(), s = KS.summary(a, syl(), d.progress, t), pm = KS.progressMap(d.progress, a.id), leader = st.role === 'leader';
     var C = 2 * Math.PI * 28, nt = s.nextTraining;
-    var weeks = []; SYLLABUS.forEach(function (it) { if (weeks.indexOf(it.wk) < 0) weeks.push(it.wk); }); weeks.sort(function (x, y) { return x - y; });
+    // The leader sees every week (so cards can be added anywhere); an agent sees weeks that have cards.
+    var weeks = leader ? ALL_WEEKS.slice() : [];
+    if (!leader) KS.forAgent(syl(), a).forEach(function (it) { if (weeks.indexOf(it.wk) < 0) weeks.push(it.wk); });
+    weeks.sort(function (x, y) { return x - y; });
 
-    var myAlerts = leader ? [] : KS.alerts(agents(), SYLLABUS, d.progress, t, a.id);
+    var myAlerts = leader ? [] : KS.alerts(agents(), syl(), d.progress, t, a.id);
     var html = topBar(leader ? a.name : 'My 90 Days', leader ? '90Days Kick Start' : 'Hi ' + a.name,
       leader ? '<button class="icon" id="back" aria-label="Back">←</button>' : '',
       '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
@@ -281,6 +289,7 @@
     });
     $app.querySelectorAll('#tabs [data-w]').forEach(function (b) { b.onclick = function () { scrollToWeek(+b.dataset.w); }; });
     $app.querySelectorAll('.card').forEach(function (c) { c.onclick = function () { openItem(a.id, c.dataset.id); }; });
+    $app.querySelectorAll('[data-addcard]').forEach(function (b) { b.onclick = function () { editCard(null, {wk: +b.dataset.addcard, forAgent: a}); }; });
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w); }; });
     if (st.tab === 'activity') bindActivity(a);
     if (st.tab === 'board') {
@@ -292,7 +301,7 @@
 
   function shortWk(w) { return w === 0 ? 'Setup' : w === 12 ? 'Last' : w === 13 ? 'Goals' : 'W' + w; }
   function weekDot(a, w, pm, t) {
-    var its = SYLLABUS.filter(function (x) { return x.wk === w && x.kind !== 'award'; });
+    var its = KS.forAgent(syl(), a).filter(function (x) { return x.wk === w && x.kind !== 'award'; });
     if (!its.length) return 'none';
     var ss = its.map(function (it) { return KS.itemState(a, it, pm[it.id], t); });
     if (ss.every(function (x) { return x === 'approved'; })) return 'done';
@@ -311,12 +320,14 @@
   }
 
   function column(a, w, pm, t) {
-    var its = SYLLABUS.filter(function (x) { return x.wk === w; });
+    var its = KS.forAgent(syl(), a).filter(function (x) { return x.wk === w; });
     var done = its.filter(function (it) { return pm[it.id] && pm[it.id].status === 'approved'; }).length;
-    var due = its.length && w !== 13 ? KS.dueDate(a, its[0]) : null;
+    var dueDay = its.length ? its[0].due : defaultDue(w), due = w !== 13 ? KS.dueDate(a, {due: dueDay}) : null;
     return '<div class="col" data-col="' + w + '"><h4><span>' + esc(wkName(w)) + '</span><span class="note">' + done + '/' + its.length + '</span></h4>' +
-      '<div class="cmeta">' + (w === 0 ? 'Set up during your first weeks' : w === 13 ? 'Achievements to aim for by day 90' : due ? 'Due ' + fmt(due) + ' (day ' + its[0].due + ')' : 'Due day ' + its[0].due) + '</div>' +
-      its.map(function (it) { return cardHtml(a, it, pm[it.id], t); }).join('') + '</div>';
+      '<div class="cmeta">' + (w === 0 ? 'Set up during your first weeks' : w === 13 ? 'Achievements to aim for by day 90' : due ? 'Due ' + fmt(due) + ' (day ' + dueDay + ')' : 'Due day ' + dueDay) + '</div>' +
+      its.map(function (it) { return cardHtml(a, it, pm[it.id], t); }).join('') +
+      (!its.length ? '<div class="note" style="padding:6px 4px 10px">No cards in this week yet.</div>' : '') +
+      (st.role === 'leader' ? '<button class="addcard" data-addcard="' + w + '">＋ Add card</button>' : '') + '</div>';
   }
 
   function cardHtml(a, it, p, t) {
@@ -327,6 +338,7 @@
       (it.kind !== 'award' && (it.wk === 0 || it.due !== (it.wk === 12 ? 90 : it.wk * 7)) ? '<span>📅 ' + fmt(due) + '</span>' : '') +
       (nChecks ? '<span>☑ ' + done + '/' + nChecks + '</span>' : '') + (files ? '<span>📎 ' + files + '</span>' : '') +
       (p && p.note ? '<span>📝</span>' : '') + (it.links ? '<span>🔗 ' + it.links.length + '</span>' : '') +
+      (it.agentId ? '<span title="Only on this agent\'s board">👤 ' + (st.role === 'leader' ? 'This agent only' : 'Just for you') + '</span>' : '') +
       '<span class="chip ' + s + '">' + (s === 'approved' && it.kind === 'award' ? 'Achieved' : STATE[s]) + '</span></div></div>';
   }
 
@@ -368,9 +380,11 @@
           : '<div class="desc" style="background:#fff;border:1px solid var(--line)">' + (p.note ? esc(p.note) : '<span class="note">Nothing written yet.</span>') + '</div>') : '') +
       (it.kind !== 'award' ? '<label class="f">Homework files</label><div class="files" id="files">' + fileList(p.files) + '</div>' +
         (canEdit ? '<input type="file" id="pick" multiple accept="image/*,application/pdf,audio/*,video/mp4,video/quicktime,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" class="hidden"><button class="btn ghost small" id="pickbtn">＋ Add photo or file</button> <span class="note">Up to 8 MB each. Photos are shrunk automatically.</span>' : '') : '') +
-      '<div class="actions"><div class="btn-row">' + actionButtons(it, p, leader, canEdit) + '</div></div>';
+      '<div class="actions"><div class="btn-row">' + actionButtons(it, p, leader, canEdit) + '</div>' +
+      (leader ? '<button class="btn ghost small" id="editcard" style="margin-top:8px;width:100%">✎ Edit this card (syllabus)</button>' : '') + '</div>';
 
     sheet(html, function (el, close) {
+      var ec = el.querySelector('#editcard'); if (ec) ec.onclick = function () { close(); editCard(it.id, {forAgent: a}); };
       el.querySelectorAll('[data-file]').forEach(function (b) { b.onclick = function () { viewFile(b.dataset.file, b.dataset.url); }; });
       var pick = el.querySelector('#pick');
       if (pick) {
@@ -481,7 +495,7 @@
     function ratio(n, d) { return d ? Math.round(n * 100 / d) : null; }
     var oa = ratio(T.o, T.a), po = ratio(T.p, T.o), fp = ratio(T.f, T.p), cp = ratio(T.c, T.p);
     function r(label, v, good, hint) { return '<div class="ratio ' + (v == null ? '' : good(v) ? 'good' : 'low') + '"><b>' + (v == null ? '—' : v + '%') + '</b><span>' + label + '<br>' + hint + '</span></div>'; }
-    var s = KS.summary(a, SYLLABUS, st.data.progress, today()), cur = s.week || 1;
+    var s = KS.summary(a, syl(), st.data.progress, today()), cur = s.week || 1;
     return '<div class="wrap">' +
       (st.role === 'leader' ? '' : '<div class="panel"><b>Log this week</b><div class="note">A = approaches, O = appointments, P = presentations, F = follow-ups, C = closed cases</div>' +
         '<div>' +
@@ -619,10 +633,94 @@
     document.getElementById('back').onclick = goTeam;
   }
 
-  function syllabusOverview() {
-    var weeks = {}; SYLLABUS.forEach(function (it) { (weeks[it.wk] = weeks[it.wk] || []).push(it); });
-    sheet('<h3>Syllabus overview</h3><p class="note">From the Trello board, version ' + SYLLABUS_VERSION + '. ' + SYLLABUS.length + ' items. Ask Claude to change it.</p>' +
-      Object.keys(weeks).map(function (w) { return '<label class="f">' + esc(wkName(+w)) + ' · due day ' + weeks[w][0].due + '</label>' + weeks[w].map(function (it) { return '<div class="check"><span class="k ' + it.kind + '" style="font:700 9.5px var(--font);text-transform:uppercase;padding:2px 6px;border-radius:6px">' + KIND[it.kind] + '</span> ' + esc(it.title) + '</div>'; }).join(''); }).join(''));
+  /* ---------- leader: syllabus editing (agents never see these) ---------- */
+  function closeAllSheets() { document.querySelectorAll('.scrim').forEach(function (s) { s.remove(); }); document.body.style.overflow = ''; }
+
+  function syllabusEditor() {
+    if (st.role !== 'leader') return;
+    var names = {}; agents().forEach(function (a) { names[a.id] = a.name; });
+    var removed = (st.data && st.data.removedItems) || [];
+    var kTag = function (it) { return '<span class="k ' + it.kind + '" style="font:700 9.5px var(--font);text-transform:uppercase;padding:2px 6px;border-radius:6px;flex:none">' + KIND[it.kind] + '</span>'; };
+    sheet('<h3>Edit syllabus</h3><p class="note">Changes show on every agent\'s board straight away. Agents can only add notes and files; they cannot change cards. Tap a card to edit it.</p>' +
+      ALL_WEEKS.map(function (w) {
+        var its = syl().filter(function (it) { return it.wk === w; });
+        return '<div class="section-title" style="margin:18px 0 6px">' + esc(wkName(w)) + ' <button class="btn ghost small" data-add="' + w + '">＋ Add</button></div>' +
+          (its.length ? its.map(function (it) {
+            return '<div class="check" data-edit="' + esc(it.id) + '" style="cursor:pointer">' + kTag(it) + '<span style="flex:1">' + esc(it.title) +
+              (it.agentId ? ' <span class="note">· only ' + esc(names[it.agentId] || 'one agent') + '</span>' : '') + '</span><span class="note">day ' + it.due + ' ›</span></div>';
+          }).join('') : '<div class="note">No cards.</div>');
+      }).join('') +
+      (removed.length ? '<div class="section-title" style="margin:22px 0 6px">Removed cards</div>' + removed.map(function (it) {
+        return '<div class="check">' + kTag(it) + '<span style="flex:1;text-decoration:line-through;color:var(--muted)">' + esc(it.title) + '</span><button class="btn ghost small" data-restore="' + esc(it.id) + '">Restore</button></div>';
+      }).join('') : ''),
+      function (el, close) {
+        el.querySelectorAll('[data-add]').forEach(function (b) { b.onclick = function () { close(); editCard(null, {wk: +b.dataset.add, back: true}); }; });
+        el.querySelectorAll('[data-edit]').forEach(function (b) { b.onclick = function () { close(); editCard(b.dataset.edit, {back: true}); }; });
+        el.querySelectorAll('[data-restore]').forEach(function (b) {
+          b.onclick = async function () {
+            try { await api('restoreItem', {id: b.dataset.restore}); close(); toast('Card restored'); await refresh(); syllabusEditor(); } catch (e) { showErr(e); }
+          };
+        });
+      });
+  }
+
+  // id = card to edit, or null to add one. opts: wk (new card's week), forAgent (agent whose board we came from), back (return to the syllabus list)
+  function editCard(id, opts) {
+    if (st.role !== 'leader') return;
+    opts = opts || {};
+    var it = id ? item(id) : null;
+    if (id && !it) { toast(ERR.unknown_item, true); return; }
+    var wk = it ? it.wk : (opts.wk != null ? opts.wk : 1), act = agents().filter(function (a) { return a.active; });
+    var scope = it ? (it.agentId || '') : '';
+    var linksText = it && it.links ? it.links.map(function (l) { return l.t + ' | ' + l.u; }).join('\n') : '';
+    var html = '<h3>' + (it ? 'Edit card' : 'Add a card') + '</h3>' +
+      (it && it.builtin && !it.edited ? '<p class="note">From the original Trello syllabus. Your changes replace it for everyone it applies to.</p>' : '') +
+      '<label class="f">Title</label><input type="text" id="c-title" maxlength="120" value="' + esc(it ? it.title : '') + '" placeholder="e.g. Role Play Closing">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label class="f">Type</label><select id="c-kind">' +
+        ['training', 'homework', 'task', 'award'].map(function (k) { return '<option value="' + k + '"' + ((it ? it.kind : 'homework') === k ? ' selected' : '') + '>' + KIND[k] + '</option>'; }).join('') + '</select></div>' +
+      '<div><label class="f">Week</label><select id="c-wk">' + ALL_WEEKS.map(function (w) { return '<option value="' + w + '"' + (w === wk ? ' selected' : '') + '>' + esc(wkName(w)) + '</option>'; }).join('') + '</select></div></div>' +
+      '<label class="f">Due on day (counted from the agent\'s start date)</label><input type="number" id="c-due" min="1" max="365" inputmode="numeric" value="' + (it ? it.due : '') + '" placeholder="Leave empty for the week\'s usual day (' + defaultDue(wk) + ')">' +
+      '<label class="f">Instructions</label><textarea id="c-desc" maxlength="2000" placeholder="What should the agent do or learn?">' + esc(it ? it.desc || '' : '') + '</textarea>' +
+      '<label class="f">Checklist (one step per line, optional)</label><textarea id="c-checks" style="min-height:80px" placeholder="Prospect 1&#10;Prospect 2">' + esc(it && it.checks ? it.checks.join('\n') : '') + '</textarea>' +
+      '<label class="f">Learning links (one per line: Title | https://…)</label><textarea id="c-links" style="min-height:70px" placeholder="Objection Handling | https://sites.google.com/...">' + esc(linksText) + '</textarea>' +
+      '<label class="check" style="border:0"><input type="checkbox" id="c-summary"' + (it && it.summary ? ' checked' : '') + '> Agent must write a summary in their own words</label>' +
+      '<label class="f">Show this card to</label><select id="c-scope"><option value="">All agents</option>' +
+        act.map(function (a) { return '<option value="' + esc(a.id) + '"' + (scope === a.id ? ' selected' : '') + '>Only ' + esc(a.name) + '</option>'; }).join('') + '</select>' +
+      (it ? '<div class="btn-row" style="margin-top:12px"><button class="btn ghost small" id="c-up">↑ Move up</button><button class="btn ghost small" id="c-down">↓ Move down</button></div>' : '') +
+      '<div class="actions"><div class="btn-row"><button class="btn gold" id="c-save">' + (it ? 'Save card' : 'Add card') + '</button></div>' +
+      (it ? '<button class="btn ghost small" id="c-remove" style="margin-top:8px;width:100%;color:var(--red)">Remove card…</button>' : '') + '</div>';
+
+    sheet(html, function (el, close) {
+      var v = function (k) { return el.querySelector('#c-' + k).value; };
+      el.querySelector('#c-wk').onchange = function () { el.querySelector('#c-due').placeholder = 'Leave empty for the week\'s usual day (' + defaultDue(+v('wk')) + ')'; };
+      function after(msg) { closeAllSheets(); toast(msg); refresh().then(function () { if (opts.back) syllabusEditor(); }); }
+      function bind(sel, fn) { var b = el.querySelector(sel); if (b) b.onclick = fn; }
+      bind('#c-up', async function () { try { await api('moveItem', {id: it.id, dir: -1}); after('Moved up'); } catch (e) { showErr(e); } });
+      bind('#c-down', async function () { try { await api('moveItem', {id: it.id, dir: 1}); after('Moved down'); } catch (e) { showErr(e); } });
+      bind('#c-remove', async function () {
+        if (!(await confirmBox('Remove "' + it.title + '"?', 'It disappears from ' + (it.agentId ? 'that agent\'s board' : 'every agent\'s board') + '. Any notes, files and approvals already saved on it are kept, and you can restore it from Edit syllabus.', 'Remove card', true))) return;
+        try { await api('removeItem', {id: it.id}); after('Card removed'); } catch (e) { showErr(e); }
+      });
+      bind('#c-save', async function () {
+        var title = v('title').trim(), due = v('due').trim(), links = [], bad = '';
+        v('links').split('\n').map(function (s) { return s.trim(); }).filter(Boolean).forEach(function (line) {
+          var parts = line.split('|'), u = parts.length > 1 ? parts.slice(1).join('|').trim() : parts[0].trim(), t = parts.length > 1 ? parts[0].trim() : '';
+          if (!/^https?:\/\/\S+$/i.test(u)) bad = line; else links.push({t: t || 'Link', u: u});
+        });
+        if (!title) { toast(ERR.title_required, true); return; }
+        if (due && !(+due >= 1 && +due <= 365)) { toast(ERR.bad_due, true); return; }
+        if (bad) { toast('This link line is not a web address: ' + bad, true); return; }
+        var q = {id: it ? it.id : '', title: title, kind: v('kind'), wk: +v('wk'), due: due, desc: v('desc'),
+          checks: v('checks').split('\n').map(function (s) { return s.trim(); }).filter(Boolean), links: links,
+          summary: el.querySelector('#c-summary').checked, agentId: v('scope')};
+        if (it && !q.agentId) {
+          var who = act.length + ' active agent' + (act.length === 1 ? '' : 's');
+          var dueNote = (+due || defaultDue(q.wk)) !== it.due || q.wk !== it.wk ? ' Its due date moves for everyone.' : '';
+          if (!(await confirmBox('Save changes to this card?', 'This updates the card on the board of all ' + who + '.' + dueNote + ' Work already saved on it is kept.', 'Save for everyone'))) return;
+        }
+        try { await api('saveItem', {item: q}); after(it ? 'Card saved' : 'Card added'); } catch (e) { showErr(e); }
+      });
+    });
   }
 
   /* ---------- start ---------- */

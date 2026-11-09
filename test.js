@@ -6,10 +6,10 @@ global.KS = require('./docs/logic.js');
 global.CORE = require('./docs/core.js');
 
 let clock = new Date('2026-11-04T01:00:00Z');   // 9am MYT
-const db = {agents: [], progress: [], activity: [], settings: [], log: []}, files = {}, outbox = [];
+const db = {agents: [], progress: [], activity: [], settings: [], log: [], syllabus: []}, files = {}, outbox = [];
 let failsN = 0, seq = 0;
 const store = {
-  load: t => JSON.parse(JSON.stringify(db[t])), save: (t, r) => { db[t] = JSON.parse(JSON.stringify(r)); },
+  load: t => JSON.parse(JSON.stringify(db[t] || [])), save: (t, r) => { db[t] = JSON.parse(JSON.stringify(r)); },
   withLock: fn => fn(), prop: k => k === 'LEADER_CODE' ? 'leader-secret-123' : '',
   fails: n => (failsN += n, failsN - n), now: () => clock, random: () => ((seq = (seq * 9301 + 49297) % 233280) / 233280),
   putFile: (a, name, mime, b64) => { const id = 'F' + Object.keys(files).length; files[id] = {name, mime, b64}; return {id, url: ''}; },
@@ -128,6 +128,65 @@ ok('archive blocks sign-in; delete needs the exact name and trashes files', () =
   assert.equal(db.progress.filter(p => p.agentId === ag.id).length, 0);
   assert.equal(Object.keys(files).length, 0);
   assert.ok(db.log.some(l => l.action === 'deleted agent'));
+});
+
+ok('only the leader can change the syllabus; agents only add notes and files', () => {
+  const a1 = call({op: 'addAgent', code: L, name: 'Card Tester', start: '2026-11-01'}).agent;
+  const a2 = call({op: 'addAgent', code: L, name: 'Other Agent', start: '2026-11-01'}).agent;
+  err({op: 'saveItem', code: a1.code, item: {title: 'Hack', kind: 'homework', wk: 1}}, 'forbidden');
+  err({op: 'removeItem', code: a1.code, id: 'w1a'}, 'forbidden');
+  err({op: 'moveItem', code: a1.code, id: 'w1a', dir: 1}, 'forbidden');
+  err({op: 'board', code: a1.code}, 'forbidden');
+
+  // messy input is refused, not guessed
+  err({op: 'saveItem', code: L, item: {title: '', kind: 'homework', wk: 1}}, 'title_required');
+  err({op: 'saveItem', code: L, item: {title: 'X', kind: 'homework', wk: 20}}, 'bad_week');
+  err({op: 'saveItem', code: L, item: {title: 'X', kind: 'homework', wk: 1, due: 999}}, 'bad_due');
+  err({op: 'saveItem', code: L, item: {title: 'X', kind: 'homework', wk: 1, links: [{t: 'bad', u: 'javascript:alert(1)'}]}}, 'bad_link');
+  err({op: 'saveItem', code: L, item: {title: 'X', kind: 'boss', wk: 1}}, 'invalid_request');
+
+  // add a team-wide card: every agent gets it, due on the week's usual day
+  const c = call({op: 'saveItem', code: L, item: {title: 'Role Play Closing', kind: 'homework', wk: 3, checks: ['Round 1', 'Round 2'], links: [{t: 'Script', u: 'https://example.com/close'}]}}).item;
+  assert.equal(c.due, 21);
+  const m1 = call({op: 'mine', code: a1.code});
+  assert.ok(m1.syllabus.some(i => i.id === c.id));
+  assert.equal(m1.syllabus.filter(i => i.wk === 3).pop().id, c.id);   // goes to the end of the week
+  call({op: 'submit', code: a1.code, itemId: c.id, checks: [true, true], note: 'Did both rounds'});
+
+  // a card for one agent only
+  const solo = call({op: 'saveItem', code: L, item: {title: 'Extra: shadow Isabel', kind: 'task', wk: 2, agentId: a1.id}}).item;
+  assert.ok(call({op: 'mine', code: a1.code}).syllabus.some(i => i.id === solo.id));
+  assert.ok(!call({op: 'mine', code: a2.code}).syllabus.some(i => i.id === solo.id));
+  err({op: 'submit', code: a2.code, itemId: solo.id, note: 'x'}, 'unknown_item');
+
+  // edit a built-in Trello card
+  call({op: 'saveItem', code: L, item: {id: 'w1c', title: 'Goal Setting (90-day plan)', kind: 'training', wk: 1, due: 5, desc: 'Bring your goal sheet'}});
+  const gs = call({op: 'mine', code: a1.code}).syllabus.find(i => i.id === 'w1c');
+  assert.equal(gs.title, 'Goal Setting (90-day plan)'); assert.equal(gs.due, 5); assert.equal(gs.desc, 'Bring your goal sheet');
+
+  // move up/down within the week
+  const before = call({op: 'board', code: L}).syllabus.filter(i => i.wk === 1).map(i => i.id);
+  call({op: 'moveItem', code: L, id: before[1], dir: -1});
+  const after = call({op: 'board', code: L}).syllabus.filter(i => i.wk === 1).map(i => i.id);
+  assert.deepEqual(after.slice(0, 2), [before[1], before[0]]);
+  assert.deepEqual(after.slice(2), before.slice(2));
+
+  // remove keeps the agent's saved work; restore brings it back
+  call({op: 'removeItem', code: L, id: c.id});
+  const b2 = call({op: 'board', code: L});
+  assert.ok(!b2.syllabus.some(i => i.id === c.id)); assert.ok(b2.removedItems.some(i => i.id === c.id));
+  assert.ok(db.progress.some(p => p.itemId === c.id && p.note === 'Did both rounds'));
+  err({op: 'save', code: a1.code, itemId: c.id, note: 'x'}, 'unknown_item');
+  call({op: 'restoreItem', code: L, id: c.id});
+  assert.ok(call({op: 'mine', code: a1.code}).syllabus.some(i => i.id === c.id));
+  assert.ok(db.log.some(l => l.action === 'added card') && db.log.some(l => l.action === 'removed card'));
+});
+
+ok('syllabus rows read back from Google Sheets as text still work', () => {
+  db.syllabus.push({id: 'cSHEET01', wk: '4', kind: 'homework', title: 'From sheet', desc: '', links: [], checks: [], due: '', summary: 'true', agentId: '', order: '', removed: 'false', updated: ''});
+  const it = CORE.syllabus(store).find(i => i.id === 'cSHEET01');
+  assert.equal(it.wk, 4); assert.equal(it.due, 28); assert.equal(it.summary, true); assert.equal(it.removed, false);
+  db.syllabus.pop();
 });
 
 ok('locks out after 20 wrong codes', () => {

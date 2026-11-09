@@ -36,7 +36,11 @@ var KS = (function () {
     return m;
   }
 
+  // Cards for one agent: team-wide cards plus cards the leader added only for them.
+  function forAgent(syllabus, agent) { return syllabus.filter(function (it) { return !it.agentId || it.agentId === agent.id; }); }
+
   function summary(agent, syllabus, progress, today) {
+    syllabus = forAgent(syllabus, agent);
     var pm = progressMap(progress, agent.id), req = 0, done = 0, overdue = 0, waiting = 0, redo = 0, worstLate = 0, awards = 0;
     var known = {};
     syllabus.forEach(function (it) {
@@ -90,7 +94,7 @@ var KS = (function () {
       if (sm.health === 'complete' || sm.day < 1) return;
       var nt = sm.nextTraining;
       if (nt && nt.daysLeft != null && nt.daysLeft <= SOON_DAYS) out.push({type: 'arrange', agent: a, wk: nt.wk, due: nt.due, daysLeft: nt.daysLeft, items: nt.items});
-      syllabus.forEach(function (it) {
+      forAgent(syllabus, a).forEach(function (it) {
         var s = itemState(a, it, pm[it.id], today), due = dueDate(a, it);
         if (s === 'submitted' && !forAgentId) out.push({type: 'review', agent: a, item: it});
         else if (s === 'redo') out.push({type: 'redo', agent: a, item: it, comment: pm[it.id].comment || ''});
@@ -129,7 +133,7 @@ var KS = (function () {
   }
 
   return {validDate: validDate, addDays: addDays, diffDays: diffDays, todayMYT: todayMYT, dueDate: dueDate, dayNumber: dayNumber,
-    itemState: itemState, progressMap: progressMap, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, SOON_DAYS: SOON_DAYS};
+    itemState: itemState, progressMap: progressMap, forAgent: forAgent, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, SOON_DAYS: SOON_DAYS};
 })();
 
 if (typeof module !== 'undefined') module.exports = KS;

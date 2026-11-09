@@ -31,7 +31,7 @@
 - **Email reminders** previews every email that would go out now. Nothing sends until you tap Send and confirm.
 - **Settings** holds your name, your email, the app link, and the switch for **daily 8am emails**. Daily emails are off until you turn them on.
 - **History** shows the last 60 actions: who submitted, approved or changed what.
-- **Syllabus overview** lists all 58 items by week.
+- **Edit syllabus** lists every card by week. Tap a card to edit it, tap **＋ Add** to add one, and restore removed cards at the bottom.
 
 ## For the new agent
 
@@ -52,4 +52,4 @@
 - Only you, with the leader code, can see all agents. Each agent sees only their own board.
 
 ## Changing the syllabus
-Tell Claude what to add, remove or rename. Each item has a permanent id, so agents' existing progress is kept.
+Only the leader can change cards. Use ☰ → **Edit syllabus**, the **＋ Add card** button at the bottom of any week on an agent's board, or **✎ Edit this card** inside a card. Each card can be for all agents or one agent only. Removing a card hides it but keeps any work already saved on it. Agents can only tick checklists, write notes and upload files.
