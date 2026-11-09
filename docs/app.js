@@ -370,7 +370,8 @@
       '<h3>' + esc(it.title) + '</h3><span class="chip ' + s + '">' + (s === 'approved' && it.kind === 'award' ? 'Achieved' : STATE[s]) + '</span>' +
       (p.reviewed && p.status === 'approved' ? ' <span class="note">on ' + fmtTime(p.reviewed) + '</span>' : '') +
       (it.desc ? '<div class="desc">' + esc(it.desc) + '</div>' : '') +
-      (it.links ? '<label class="f">Learning material</label><div class="links">' + it.links.map(function (l) { return '<a href="' + esc(l.u) + '" target="_blank" rel="noopener">🔗 ' + esc(l.t) + '</a>'; }).join('') + '</div>' : '') +
+      (it.links ? '<label class="f">Learning material</label><div class="links">' + it.links.map(function (l) { return '<a href="' + esc(l.u) + '" target="_blank" rel="noopener">🔗 ' + esc(l.t) + '</a>'; }).join('') + '</div>' +
+        (it.links.some(function (l) { return /^https:\/\/redefine\.solutions\/portal\//.test(l.u); }) ? '<p class="note" style="margin:2px 0 0">Opens the REDEFINE Agent Portal. Log in with your portal ID if asked.</p>' : '') : '') +
       (p.comment ? '<div class="comment"><b>' + (p.status === 'redo' ? 'Leader' : 'Leader (earlier comment)') + ':</b> ' + esc(p.comment) + '</div>' : '') +
       (it.checks ? '<label class="f">Checklist</label>' + it.checks.map(function (c, i) {
         return '<label class="check"><input type="checkbox" data-c="' + i + '"' + (p.checks && p.checks[i] ? ' checked' : '') + (canEdit ? '' : ' disabled') + '> ' + esc(c) + '</label>';

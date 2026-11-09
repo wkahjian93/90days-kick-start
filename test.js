@@ -189,6 +189,13 @@ ok('syllabus rows read back from Google Sheets as text still work', () => {
   db.syllabus.pop();
 });
 
+ok('every training link opens the REDEFINE Agent Portal, none go to Google', () => {
+  const links = SYLLABUS.flatMap(i => i.links || []);
+  assert.equal(links.length, 23);
+  links.forEach(l => assert.ok(l.u.startsWith('https://redefine.solutions/portal/?p=lesson&id=') && /^[a-z0-9-]+$/.test(l.u.split('id=')[1]), l.t));
+  assert.ok(!/sites.google|youtu.?be|drive.google/.test(JSON.stringify(SYLLABUS)));
+});
+
 ok('locks out after 20 wrong codes', () => {
   failsN = 20; err({op: 'login', code: L}, 'locked'); failsN = 0;
 });
