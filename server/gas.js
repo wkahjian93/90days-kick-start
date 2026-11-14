@@ -38,6 +38,10 @@ var GAS = (function () {
       s.getRange(1, 1, s.getMaxRows(), cols.length).setNumberFormat('@');   // keep dates and codes as plain text
       var first = b.getSheetByName('Sheet1');
       if (first && b.getSheets().length > 1) b.deleteSheet(first);
+    } else if (s.getLastColumn() < cols.length) {
+      // columns added in a newer version: name them, keep them as plain text
+      s.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
+      s.getRange(1, 1, s.getMaxRows(), cols.length).setNumberFormat('@');
     }
     return s;
   }

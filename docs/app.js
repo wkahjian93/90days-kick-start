@@ -5,7 +5,7 @@
   var st = {demo: false, code: '', role: '', data: null, screen: '', agentId: '', tab: 'board'};
   var KIND = {training: 'Training', homework: 'Homework', task: 'Task', award: 'Award'};
   var STATE = {approved: 'Approved', submitted: 'Waiting review', redo: 'Redo', overdue: 'Overdue', soon: 'Due soon', open: 'Not started', goal: 'Goal'};
-  var HEALTH = {ontrack: 'On track', behind: 'Behind', risk: 'At risk', complete: 'Completed', nostart: 'No start date', notyet: 'Not started yet', archived: 'Archived'};
+  var HEALTH = {ontrack: 'On track', behind: 'Behind', risk: 'At risk', complete: 'Completed', nostart: 'No start date', notyet: 'Not started yet', archived: 'Archived', graduated: '🎓 Graduated', notgrad: 'Not graduated'};
   var ERR = {
     unauthorized: 'That code is not recognised. Check it with your leader.', locked: 'Too many wrong codes. Wait 15 minutes and try again.',
     network: 'No connection to the server. Check your internet and try again.', server_error: 'The server had a problem. Try again in a minute.',
@@ -169,14 +169,15 @@
   /* ---------- leader: team ---------- */
   function goTeam() {
     st.screen = 'team';
-    var d = st.data, t = today(), act = agents().filter(function (a) { return a.active; });
+    var d = st.data, t = today(), act = agents().filter(function (a) { return a.active && !a.grad; });
+    var gradCount = agents().filter(function (a) { return a.grad === 'yes'; }).length;
     var sums = {}; agents().forEach(function (a) { sums[a.id] = KS.summary(a, syl(), d.progress, t); });
     var al = KS.alerts(agents(), syl(), d.progress, t, null, d.appts);
     var avg = act.length ? Math.round(act.reduce(function (s, a) { return s + sums[a.id].pct; }, 0) / act.length) : 0;
     var waiting = act.reduce(function (s, a) { return s + sums[a.id].waiting; }, 0), over = act.reduce(function (s, a) { return s + sums[a.id].overdue; }, 0);
     var shown = st.showAllAlerts ? al : al.slice(0, 8);
 
-    var order = {risk: 0, behind: 1, nostart: 2, ontrack: 3, notyet: 4, complete: 5};
+    var order = {risk: 0, behind: 1, nostart: 2, ontrack: 3, notyet: 4, complete: 5, graduated: 6, notgrad: 7};
     var list = agents().slice().sort(function (a, b) {
       if (a.active !== b.active) return a.active ? -1 : 1;
       return (order[sums[a.id].health] - order[sums[b.id].health]) || a.name.localeCompare(b.name);
@@ -186,7 +187,7 @@
       '<div class="wrap">' +
       '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE · 90Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       '<div class="stats">' +
-        '<div class="stat"><b>' + act.length + '</b><span>Active agents</span></div>' +
+        '<div class="stat"><b>' + act.length + '</b><span>In training' + (gradCount ? ' · 🎓 ' + gradCount + ' graduated' : '') + '</span></div>' +
         '<div class="stat"><b>' + avg + '%</b><span>Average progress</span></div>' +
         '<div class="stat"><b style="color:var(--blue)">' + waiting + '</b><span>Waiting your review</span></div>' +
         '<div class="stat"><b style="color:var(--red)">' + over + '</b><span>Overdue items</span></div>' +
@@ -199,19 +200,20 @@
       '</div>';
 
     $app.querySelectorAll('.acard').forEach(function (c) { c.onclick = function () { goAgent(c.dataset.id); }; });
-    $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w); }; });
+    $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w, c.dataset.t); }; });
     var more = document.getElementById('more'); if (more) more.onclick = function () { st.showAllAlerts = true; goTeam(); };
     document.getElementById('add').onclick = function () { editAgent(null); };
     document.getElementById('menu').onclick = leaderMenu;
   }
 
-  var ALERT_TAG = {arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
+  var ALERT_TAG = {graduate: 'Graduation', arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
   function alertRow(x) {
     var mine = st.role !== 'leader', tag = mine && x.type === 'arrange' ? 'Book training' : ALERT_TAG[x.type];
-    return '<div class="alert ' + x.type + '" data-a="' + esc(x.agent.id) + '" data-i="' + esc(x.item ? x.item.id : '') + '" data-w="' + (x.wk || '') + '"><span class="dot"></span><div class="txt">' +
+    return '<div class="alert ' + x.type + '" data-a="' + esc(x.agent.id) + '" data-i="' + esc(x.item ? x.item.id : '') + '" data-w="' + (x.wk || '') + '" data-t="' + x.type + '"><span class="dot"></span><div class="txt">' +
       '<div class="tag">' + tag + '</div>' + esc(KS.alertText(x, WEEK_NAMES, mine, st.data.settings && st.data.settings.leaderName)) + '</div></div>';
   }
-  function alertClick(aid, iid, wk) {
+  function alertClick(aid, iid, wk, type) {
+    if (type === 'graduate') { goAgent(aid); gradSheet(aid); return; }
     if (st.role === 'leader' && !iid && !wk) { editAgent(aid); return; }
     goAgent(aid);
     if (iid) openItem(aid, iid); else if (wk) scrollToWeek(+wk);
@@ -224,7 +226,9 @@
       '<div class="meta">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · ' + wkName(s.week)) : 'Start date missing') + '</div>' +
       '<div class="bar"><i style="width:' + s.pct + '%"></i></div>' +
       '<div class="nums"><span><b>' + s.pct + '%</b> done (' + s.done + '/' + s.required + ')</span><span><b style="color:var(--blue)">' + s.waiting + '</b> to review</span><span><b style="color:var(--red)">' + s.overdue + '</b> overdue</span>' + (s.awards ? '<span>🏆 <b>' + s.awards + '</b></span>' : '') + '</div>' +
-      (a.active && nt && apptOf(a, nt.wk) ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + ' <span class="chip approved">booked</span></div>' :
+      (a.grad ? '<div class="next">' + (a.grad === 'yes' ? '🎓 Graduated on <b>' + fmt(a.gradDate) + '</b>' : 'Not graduated · decided ' + fmt(a.gradDate)) + '</div>' :
+       s.decide ? '<div class="next">🎓 ' + (s.allDone ? 'All training done' : 'Past day 90') + ': <b>mark Graduated or not</b></div>' :
+       a.active && nt && apptOf(a, nt.wk) ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + ' <span class="chip approved">booked</span></div>' :
        a.active && nt && nt.due ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> by ' + fmt(nt.due) + (nt.daysLeft < 0 ? ' <span class="chip overdue">' + (-nt.daysLeft) + 'd late</span>' : nt.daysLeft <= KS.SOON_DAYS ? ' <span class="chip soon">arrange now</span>' : '') + '</div>' : '') +
       (s.unmatched ? '<div class="note" style="margin-top:6px">' + s.unmatched + ' saved record(s) belong to items no longer in the syllabus (kept, not shown).</div>' : '') +
       '</div>';
@@ -270,7 +274,8 @@
       '<div style="min-width:0"><h2>' + esc(a.name) + ' <span class="chip ' + (a.active ? s.health : 'archived') + '">' + HEALTH[a.active ? s.health : 'archived'] + '</span></h2>' +
       '<div class="sub">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · started ' + fmt(a.start)) : 'Start date missing: ' + (leader ? 'tap Edit agent to set it' : 'ask your leader to set it')) +
       ' · ' + s.done + '/' + s.required + ' approved' + (s.waiting ? ' · ' + s.waiting + ' waiting review' : '') + '</div>' +
-      (nt && apptOf(a, nt.wk) ? '<div class="next">Next training: ' + wkName(nt.wk) + ' · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + '</div>' : nt && nt.due ? '<div class="next">Next training: ' + wkName(nt.wk) + ' by ' + fmt(nt.due) + ' · not booked yet</div>' : '') + '</div></div></div>' +
+      (a.grad ? '' : nt && apptOf(a, nt.wk) ? '<div class="next">Next training: ' + wkName(nt.wk) + ' · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + '</div>' : nt && nt.due ? '<div class="next">Next training: ' + wkName(nt.wk) + ' by ' + fmt(nt.due) + ' · not booked yet</div>' : '') + '</div></div></div>' +
+      gradBar(a, s, leader) +
       '<div class="tabs" id="tabs"><button data-t="board" class="' + (st.tab === 'board' ? 'on' : '') + '">Syllabus</button><button data-t="activity" class="' + (st.tab === 'activity' ? 'on' : '') + '">Activity A·O·P·F·C</button>' +
       (leader ? '<button data-t="edit">Edit agent</button>' : '') +
       (st.tab === 'board' ? weeks.map(function (w) { return '<button data-w="' + w + '"><span class="d ' + weekDot(a, w, pm, t) + '"></span>' + esc(shortWk(w)) + '</button>'; }).join('') : '') + '</div>';
@@ -290,6 +295,7 @@
     });
     $app.querySelectorAll('#tabs [data-w]').forEach(function (b) { b.onclick = function () { scrollToWeek(+b.dataset.w); }; });
     $app.querySelectorAll('.card').forEach(function (c) { c.onclick = function () { openItem(a.id, c.dataset.id); }; });
+    var gb = document.getElementById('gradbtn'); if (gb) gb.onclick = function () { gradSheet(a.id); };
     $app.querySelectorAll('[data-appt]').forEach(function (b) { b.onclick = function () { apptSheet(a, +b.dataset.appt); }; });
     $app.querySelectorAll('[data-addcard]').forEach(function (b) { b.onclick = function () { editCard(null, {wk: +b.dataset.addcard, forAgent: a}); }; });
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w); }; });
@@ -331,6 +337,51 @@
       its.map(function (it) { return cardHtml(a, it, pm[it.id], t); }).join('') +
       (!its.length ? '<div class="note" style="padding:6px 4px 10px">No cards in this week yet.</div>' : '') +
       (st.role === 'leader' ? '<button class="addcard" data-addcard="' + w + '">＋ Add card</button>' : '') + '</div>';
+  }
+
+  /* ---------- graduation: the leader marks Graduated or Not graduated ---------- */
+  function gradBar(a, s, leader) {
+    if (a.grad === 'yes') return '<div class="gradbar yes"><div class="gb-in"><span class="gb-ico">🎓</span><div><b>' + (leader ? esc(a.name) + ' graduated' : 'Congratulations, you graduated!') + '</b><br>90 Days Kick Start · ' + fmt(a.gradDate) + '</div>' +
+      (leader ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
+    if (a.grad === 'no') return '<div class="gradbar no"><div class="gb-in"><span class="gb-ico">📋</span><div><b>' + (leader ? 'Not graduated' : 'Your 90 Days Kick Start is closed') + '</b><br>' +
+      (leader ? 'Decided ' + fmt(a.gradDate) : 'Talk to your leader about the next steps.') + '</div>' + (leader ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
+    if (!leader) return '';
+    if (s.decide) return '<div class="gradbar ready"><div class="gb-in"><span class="gb-ico">🎓</span><div><b>' + (s.allDone ? 'All training approved' : 'Day 90 has passed') + '</b><br>Decide: Graduated or not</div>' +
+      '<button class="btn gold small" id="gradbtn">Decide</button></div></div>';
+    return '';
+  }
+
+  function gradSheet(aid) {
+    if (st.role !== 'leader') return;
+    var a = agentById(aid); if (!a) return;
+    var s = KS.summary(a, syl(), st.data.progress, today()), left = s.required - s.done;
+    sheet('<h3>Graduation · ' + esc(a.name) + '</h3>' +
+      '<p class="note">' + (s.day ? 'Day ' + s.day + ' · ' : '') + s.done + ' of ' + s.required + ' items approved' + (s.awards ? ' · 🏆 ' + s.awards + ' award(s)' : '') + '.' +
+        (left ? ' <b style="color:var(--red)">' + left + ' still not approved.</b>' : ' All training approved. 🎉') + '</p>' +
+      (a.grad ? '<p>Current decision: <b>' + (a.grad === 'yes' ? '🎓 Graduated' : 'Not graduated') + '</b> on ' + fmt(a.gradDate) + (a.gradNote ? '<br><span class="note">Note: ' + esc(a.gradNote) + '</span>' : '') + '</p>' : '') +
+      '<label class="f">Date</label><input type="date" id="g-date" value="' + esc(a.gradDate || today()) + '">' +
+      '<label class="f">Leader note (only you see this)</label><input type="text" id="g-note" maxlength="300" value="' + esc(a.gradNote || '') + '" placeholder="e.g. Hit ANP 30k, ready for own clients">' +
+      '<div class="actions"><div class="btn-row"><button class="btn gold" id="g-yes">🎓 Graduated</button><button class="btn ghost" id="g-no">Not graduated</button></div>' +
+      (a.grad ? '<button class="btn ghost small" id="g-undo" style="margin-top:8px;width:100%">Undo: back to "in training"</button>' : '') +
+      '<p class="note" style="margin:8px 0 0">Either choice ends reminders and alerts for ' + esc(a.name) + '. Their board, homework and history are kept, and you can change it later.</p></div>',
+      function (el, close) {
+        var v = function (k) { return el.querySelector('#g-' + k).value.trim(); };
+        async function decide(result) {
+          if (result && !KS.validDate(v('date'))) { toast('Choose a date.', true); return; }
+          var msg = result === 'yes'
+            ? (left ? esc(a.name) + ' still has <b>' + left + ' item(s) not approved</b>. Mark them graduated anyway?' : 'Mark ' + esc(a.name) + ' as <b>graduated</b> on ' + fmt(v('date')) + '? They will see a congratulations banner.')
+            : result === 'no' ? 'Mark ' + esc(a.name) + ' as <b>not graduated</b>? Their 90 days closes and reminders stop. They will see "Your 90 Days Kick Start is closed".'
+            : 'Undo the decision? ' + esc(a.name) + ' goes back to "in training" and reminders start again.';
+          if (!(await confirmBox(result === 'yes' ? 'Graduated?' : result === 'no' ? 'Not graduated?' : 'Undo decision?', msg, result === 'yes' ? '🎓 Graduated' : result === 'no' ? 'Not graduated' : 'Undo', result !== 'yes'))) return;
+          try {
+            await api('graduate', {id: a.id, result: result, date: v('date'), note: v('note')});
+            close(); toast(result === 'yes' ? '🎓 ' + a.name + ' graduated!' : result === 'no' ? 'Marked not graduated' : 'Back to in training'); refresh();
+          } catch (e) { showErr(e); }
+        }
+        el.querySelector('#g-yes').onclick = function () { decide('yes'); };
+        el.querySelector('#g-no').onclick = function () { decide('no'); };
+        var u = el.querySelector('#g-undo'); if (u) u.onclick = function () { decide(''); };
+      });
   }
 
   /* ---------- next appointment per week (leader and agent can both set it) ---------- */
@@ -612,6 +663,7 @@
       (a ? '<label class="f">Sign-in code</label><div class="codebox">' + esc(a.code) + '</div>' +
         '<div class="btn-row"><button class="btn ghost small" id="e-copy">Copy invite message</button>' + (a.phone ? '<a class="btn ghost small" id="e-wa" target="_blank" rel="noopener">WhatsApp invite</a>' : '') + '<button class="btn ghost small" id="e-newcode">New code</button></div>' : '') +
       '<div class="actions"><div class="btn-row"><button class="btn gold" id="e-save">' + (a ? 'Save changes' : 'Add agent') + '</button></div>' +
+      (a ? '<button class="btn ghost small" id="e-grad" style="margin-top:8px;width:100%">🎓 Graduation' + (a.grad ? ': ' + (a.grad === 'yes' ? 'Graduated' : 'Not graduated') : '…') + '</button>' : '') +
       (a ? '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-arch">' + (a.active ? 'Archive (keep records)' : 'Reactivate') + '</button><button class="btn ghost small" id="e-del" style="color:var(--red)">Delete agent…</button></div>' : '') + '</div>';
 
     sheet(html, function (el, close) {
@@ -624,6 +676,7 @@
           if (!(await confirmBox('Give ' + a.name + ' a new code?', 'The old code stops working straight away. You will need to send them the new one.', 'Make new code', true))) return;
           try { await api('updateAgent', {id: a.id, newCode: true}); close(); await refresh(); editAgent(a.id); toast('New code made'); } catch (e) { showErr(e); }
         };
+        el.querySelector('#e-grad').onclick = function () { close(); gradSheet(a.id); };
         el.querySelector('#e-arch').onclick = async function () {
           var on = !a.active;
           if (!(await confirmBox(on ? 'Reactivate ' + a.name + '?' : 'Archive ' + a.name + '?', on ? 'They can sign in again and get reminders.' : 'They can no longer sign in and get no reminders. All records and files are kept, and you can reactivate later.', on ? 'Reactivate' : 'Archive', !on))) return;

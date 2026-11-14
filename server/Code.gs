@@ -160,7 +160,9 @@ var KS = (function () {
     });
     var unmatched = Object.keys(pm).filter(function (k) { return !known[k]; }).length;
     var day = dayNumber(agent, today);
-    var health = !validDate(agent.start) ? 'nostart'
+    // The leader's final decision wins over everything else.
+    var health = agent.grad === 'yes' ? 'graduated' : agent.grad === 'no' ? 'notgrad'
+      : !validDate(agent.start) ? 'nostart'
       : day < 1 ? 'notyet'
       : done === req ? 'complete'
       : (overdue >= 3 || worstLate > 7) ? 'risk'
@@ -169,7 +171,10 @@ var KS = (function () {
       required: req, done: done, pct: req ? Math.round(done * 100 / req) : 0,
       overdue: overdue, waiting: waiting, redo: redo, awards: awards, unmatched: unmatched,
       day: day, week: day == null ? null : Math.min(12, Math.max(1, Math.ceil(day / 7))),
-      health: health, nextTraining: nextTraining(agent, syllabus, pm, today)
+      health: health, nextTraining: nextTraining(agent, syllabus, pm, today),
+      allDone: done === req,
+      // Ready for the leader's graduation call: all training approved, or day 90 has passed.
+      decide: !agent.grad && validDate(agent.start) && (done === req || day > 90)
     };
   }
 
@@ -198,7 +203,9 @@ var KS = (function () {
     agents.forEach(function (a) {
       if (a.active === false || (forAgentId && a.id !== forAgentId)) return;
       if (!validDate(a.start)) { if (!forAgentId) out.push({type: 'nostart', agent: a}); return; }
+      if (a.grad === 'yes' || a.grad === 'no') return;   // graduation decided: nothing more to chase
       var pm = progressMap(progress, a.id), sm = summary(a, syllabus, progress, today);
+      if (sm.decide && !forAgentId) out.push({type: 'graduate', agent: a, allDone: sm.allDone, day: sm.day});
       if (sm.health === 'complete' || sm.day < 1) return;
       var nt = sm.nextTraining, ap = nt && apptFor(appts, a.id, nt.wk);
       if (ap && ap.date >= today) {
@@ -215,7 +222,7 @@ var KS = (function () {
         else if (s === 'soon' && forAgentId && it.kind !== 'training') out.push({type: 'soon', agent: a, item: it, due: due, daysLeft: diffDays(today, due)});
       });
     });
-    var rank = {arrange: 0, booked: 1, review: 2, redo: 3, overdue: 4, soon: 5, nostart: 6};
+    var rank = {graduate: 0, arrange: 1, booked: 2, review: 3, redo: 4, overdue: 5, soon: 6, nostart: 7};
     return out.sort(function (x, y) { return rank[x.type] - rank[y.type]; });
   }
 
@@ -242,6 +249,7 @@ var KS = (function () {
       case 'overdue': return '"' + al.item.title + '" is overdue by ' + al.late + ' day' + (al.late === 1 ? '' : 's');
     }
     switch (al.type) {
+      case 'graduate': return al.allDone ? who + ' has finished all training: mark Graduated or Not graduated' : who + ' is past day 90 (day ' + al.day + '): decide Graduated or Not graduated';
       case 'booked': return who + ': ' + weekLabel(al.wk, names) + ' training ' + bookedDay(al.daysLeft) + ', ' + when(al.date, al.time) + (al.note ? ' (' + al.note + ')' : '');
       case 'arrange': return 'Arrange ' + weekLabel(al.wk, names) + ' training for ' + who + ' by ' + nice(al.due) + (al.daysLeft < 0 ? ' (' + (-al.daysLeft) + ' days late)' : '') + ': ' + list(al.items);
       case 'review': return who + ' submitted "' + al.item.title + '": review it';
@@ -265,7 +273,8 @@ var KS = (function () {
    putFile(agent, name, mime, base64) -> {id, url}, getFile(id) -> {name, mime, b64}, trashFile(id), mail(to, subject, text). */
 var CORE = (function () {
   var TABLES = {
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note'],
+    // grad: '' (not decided) | 'yes' (Graduated) | 'no' (Not graduated); set only by the leader
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -355,7 +364,8 @@ var CORE = (function () {
     });
   }
 
-  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false'}; }
+  // What an agent sees about themself (no leader note, no graduation note).
+  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || ''}; }
 
   /* ---------- agent ---------- */
   function agentOp(q, store, me) {
@@ -443,6 +453,7 @@ var CORE = (function () {
       case 'sendReminders': return sendReminders(q, store);
       case 'file': return getFile(q, store, null);
       case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
+      case 'graduate': return graduate(q, store);
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
       case 'restoreItem': return removeItem(q, store, false);
@@ -541,6 +552,21 @@ var CORE = (function () {
     store.save('settings', rows);
     log(store, 'Leader', 'changed settings', '', '', Object.keys(allowed).filter(function (k) { return q[k] != null; }).join(', '));
     return {ok: true, settings: settingsObj(store)};
+  }
+
+  /* ---------- graduation (leader only) ---------- */
+  // result: 'yes' Graduated, 'no' Not graduated, '' undo (back to in training)
+  function graduate(q, store) {
+    var rows = store.load('agents'), a = findAgent(rows, str(q.id, 20)), result = str(q.result);
+    if (['yes', 'no', ''].indexOf(result) < 0) fail('invalid_request');
+    var date = result ? (str(q.date, 10) || today(store)) : '';
+    if (date && !KS.validDate(date)) fail('bad_date');
+    var before = a.grad || '';
+    a.grad = result; a.gradDate = date; a.gradNote = result ? str(q.note, 300) : '';
+    store.save('agents', rows);
+    log(store, 'Leader', result === 'yes' ? 'marked graduated' : result === 'no' ? 'marked not graduated' : 'undid graduation decision', a.id, '',
+      (date ? date : '') + (a.gradNote ? ' · ' + a.gradNote : '') + (before && !result ? ' (was ' + (before === 'yes' ? 'Graduated' : 'Not graduated') + ')' : ''));
+    return {ok: true, agent: cleanAgent(a)};
   }
 
   /* ---------- next appointment per week (leader or the agent) ---------- */
@@ -696,6 +722,10 @@ var GAS = (function () {
       s.getRange(1, 1, s.getMaxRows(), cols.length).setNumberFormat('@');   // keep dates and codes as plain text
       var first = b.getSheetByName('Sheet1');
       if (first && b.getSheets().length > 1) b.deleteSheet(first);
+    } else if (s.getLastColumn() < cols.length) {
+      // columns added in a newer version: name them, keep them as plain text
+      s.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
+      s.getRange(1, 1, s.getMaxRows(), cols.length).setNumberFormat('@');
     }
     return s;
   }

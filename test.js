@@ -231,6 +231,34 @@ ok('leader and agent can set the next appointment for each week; alerts show it 
   assert.ok(db.log.some(l => l.action === 'set appointment') && db.log.some(l => l.action === 'cleared appointment'));
 });
 
+ok('leader marks Graduated or Not graduated; agents cannot; reminders stop', () => {
+  const g = call({op: 'addAgent', code: L, name: 'Grad Tester', start: '2026-08-01'}).agent;   // day 96
+  const sum = () => { const b = call({op: 'board', code: L}); const a = b.agents.find(x => x.id === g.id); return {a, s: KS.summary(a, b.syllabus, b.progress, '2026-11-04'), al: KS.alerts(b.agents, b.syllabus, b.progress, '2026-11-04', null, b.appts).filter(x => x.agent.id === g.id)}; };
+  let r = sum();
+  assert.equal(r.s.decide, true); assert.equal(r.s.allDone, false);
+  assert.ok(r.al.some(x => x.type === 'graduate' && /past day 90/.test(KS.alertText(x, WEEK_NAMES))));
+  err({op: 'graduate', code: g.code, id: g.id, result: 'yes'}, 'forbidden');
+  err({op: 'graduate', code: L, id: g.id, result: 'maybe'}, 'invalid_request');
+  err({op: 'graduate', code: L, id: g.id, result: 'yes', date: '4/11/2026'}, 'bad_date');
+  call({op: 'graduate', code: L, id: g.id, result: 'yes', date: '2026-11-04', note: 'Hit ANP 30k'});
+  r = sum();
+  assert.equal(r.a.grad, 'yes'); assert.equal(r.s.health, 'graduated'); assert.equal(r.al.length, 0);   // no more alerts
+  const me = call({op: 'mine', code: g.code}).agent;
+  assert.equal(me.grad, 'yes'); assert.equal(me.gradDate, '2026-11-04'); assert.equal(me.gradNote, undefined);   // note stays with the leader
+  assert.ok(!call({op: 'previewReminders', code: L}).emails.some(m => /Grad Tester/.test(m.body)));
+  call({op: 'graduate', code: L, id: g.id, result: 'no'});
+  assert.equal(sum().s.health, 'notgrad');
+  call({op: 'graduate', code: L, id: g.id, result: ''});
+  r = sum(); assert.equal(r.a.grad, ''); assert.equal(r.s.decide, true);
+  assert.ok(db.log.some(l => l.action === 'marked graduated') && db.log.some(l => l.action === 'undid graduation decision'));
+  // all training approved before day 90 also asks for a decision
+  const h = call({op: 'addAgent', code: L, name: 'Fast Finisher', start: '2026-10-20'}).agent;
+  call({op: 'board', code: L}).syllabus.filter(i => i.kind !== 'award' && (!i.agentId || i.agentId === h.id)).forEach(i => call({op: 'review', code: L, agentId: h.id, itemId: i.id, decision: 'approve'}));
+  const b = call({op: 'board', code: L}), ha = b.agents.find(x => x.id === h.id), hs = KS.summary(ha, b.syllabus, b.progress, '2026-11-04');
+  assert.equal(hs.allDone, true); assert.equal(hs.decide, true);
+  assert.ok(KS.alerts(b.agents, b.syllabus, b.progress, '2026-11-04', null, b.appts).some(x => x.type === 'graduate' && x.agent.id === h.id && /finished all training/.test(KS.alertText(x, WEEK_NAMES))));
+});
+
 ok('locks out after 20 wrong codes', () => {
   failsN = 20; err({op: 'login', code: L}, 'locked'); failsN = 0;
 });

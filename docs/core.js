@@ -4,7 +4,8 @@
    putFile(agent, name, mime, base64) -> {id, url}, getFile(id) -> {name, mime, b64}, trashFile(id), mail(to, subject, text). */
 var CORE = (function () {
   var TABLES = {
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note'],
+    // grad: '' (not decided) | 'yes' (Graduated) | 'no' (Not graduated); set only by the leader
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -94,7 +95,8 @@ var CORE = (function () {
     });
   }
 
-  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false'}; }
+  // What an agent sees about themself (no leader note, no graduation note).
+  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || ''}; }
 
   /* ---------- agent ---------- */
   function agentOp(q, store, me) {
@@ -182,6 +184,7 @@ var CORE = (function () {
       case 'sendReminders': return sendReminders(q, store);
       case 'file': return getFile(q, store, null);
       case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
+      case 'graduate': return graduate(q, store);
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
       case 'restoreItem': return removeItem(q, store, false);
@@ -280,6 +283,21 @@ var CORE = (function () {
     store.save('settings', rows);
     log(store, 'Leader', 'changed settings', '', '', Object.keys(allowed).filter(function (k) { return q[k] != null; }).join(', '));
     return {ok: true, settings: settingsObj(store)};
+  }
+
+  /* ---------- graduation (leader only) ---------- */
+  // result: 'yes' Graduated, 'no' Not graduated, '' undo (back to in training)
+  function graduate(q, store) {
+    var rows = store.load('agents'), a = findAgent(rows, str(q.id, 20)), result = str(q.result);
+    if (['yes', 'no', ''].indexOf(result) < 0) fail('invalid_request');
+    var date = result ? (str(q.date, 10) || today(store)) : '';
+    if (date && !KS.validDate(date)) fail('bad_date');
+    var before = a.grad || '';
+    a.grad = result; a.gradDate = date; a.gradNote = result ? str(q.note, 300) : '';
+    store.save('agents', rows);
+    log(store, 'Leader', result === 'yes' ? 'marked graduated' : result === 'no' ? 'marked not graduated' : 'undid graduation decision', a.id, '',
+      (date ? date : '') + (a.gradNote ? ' · ' + a.gradNote : '') + (before && !result ? ' (was ' + (before === 'yes' ? 'Graduated' : 'Not graduated') + ')' : ''));
+    return {ok: true, agent: cleanAgent(a)};
   }
 
   /* ---------- next appointment per week (leader or the agent) ---------- */

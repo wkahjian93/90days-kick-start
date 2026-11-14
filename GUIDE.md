@@ -27,6 +27,8 @@
 
 **If training is delayed:** open the agent and tap **Edit agent**, then move the start date. Every due date shifts, and the app asks you to confirm.
 
+**Graduation:** when an agent has all training approved, or passes day 90, the app shows "Decide: Graduated or not" on their board and in Needs you today. Tap it, add the date and an optional note that only you see, then choose **🎓 Graduated** or **Not graduated**. You can also do it any time from **Edit agent → 🎓 Graduation**. Either choice stops reminders, keeps all records, and can be undone.
+
 **Agent leaves:** use **Archive**. Their records are kept and they can't sign in. **Delete** is only for mistakes: you must type their name, and their files go to Google Drive trash, where they stay recoverable for 30 days.
 
 **☰ Menu**
