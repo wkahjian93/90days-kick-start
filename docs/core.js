@@ -10,6 +10,8 @@ var CORE = (function () {
     settings: ['key', 'value'],
     log: ['at', 'by', 'action', 'agentId', 'itemId', 'detail'],
     // Leader's card edits: a row with a built-in id changes that card; any other id is a new card.
+    // Next training appointment for one agent's week, set by the leader or the agent.
+    appts: ['agentId', 'wk', 'date', 'time', 'note', 'by', 'updated'],
     syllabus: ['id', 'wk', 'kind', 'title', 'desc', 'links', 'checks', 'due', 'summary', 'agentId', 'order', 'removed', 'updated']
   };
   var JSON_COLS = {checks: 1, files: 1, links: 1};
@@ -102,6 +104,7 @@ var CORE = (function () {
       case 'submit': return saveWork(q, store, me, true);
       case 'activity': return saveActivity(q, store, me);
       case 'file': return getFile(q, store, me);
+      case 'appt': return saveAppt(q, store, me, me.name);
     }
     fail('forbidden');
   }
@@ -111,6 +114,7 @@ var CORE = (function () {
       agent: publicAgent(me),
       progress: store.load('progress').filter(function (p) { return p.agentId === me.id; }),
       activity: store.load('activity').filter(function (r) { return r.agentId === me.id; }),
+      appts: store.load('appts').filter(function (r) { return r.agentId === me.id; }),
       syllabus: KS.forAgent(syllabus(store), me),
       settings: {leaderName: settingsObj(store).leaderName || 'Your leader'},
       today: today(store)
@@ -177,6 +181,7 @@ var CORE = (function () {
       case 'previewReminders': return {emails: reminderEmails(store)};
       case 'sendReminders': return sendReminders(q, store);
       case 'file': return getFile(q, store, null);
+      case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
       case 'restoreItem': return removeItem(q, store, false);
@@ -191,6 +196,7 @@ var CORE = (function () {
       agents: store.load('agents').map(cleanAgent),
       progress: store.load('progress'),
       activity: store.load('activity'),
+      appts: store.load('appts'),
       syllabus: all.filter(function (it) { return !it.removed; }),
       removedItems: all.filter(function (it) { return it.removed; }),
       settings: settingsObj(store),
@@ -276,6 +282,26 @@ var CORE = (function () {
     return {ok: true, settings: settingsObj(store)};
   }
 
+  /* ---------- next appointment per week (leader or the agent) ---------- */
+  function saveAppt(q, store, agent, by) {
+    var wk = Math.round(+q.wk), rows = store.load('appts');
+    if (!(wk >= 0 && wk <= 13)) fail('bad_week');
+    rows = rows.filter(function (r) { return !(r.agentId === agent.id && +r.wk === wk); });
+    if (q.clear === true) {
+      store.save('appts', rows);
+      log(store, by, 'cleared appointment', agent.id, '', KS.weekLabel(wk, WEEK_NAMES));
+      return {ok: true, appt: null};
+    }
+    var date = str(q.date, 10), time = str(q.time, 5), note = str(q.note, 200);
+    if (!KS.validDate(date)) fail('bad_date');
+    if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) fail('bad_time');
+    var row = {agentId: agent.id, wk: wk, date: date, time: time, note: note, by: by, updated: nowIso(store)};
+    rows.push(row);
+    store.save('appts', rows);
+    log(store, by, 'set appointment', agent.id, '', KS.weekLabel(wk, WEEK_NAMES) + ': ' + KS.when(date, time) + (note ? ' (' + note + ')' : ''));
+    return {ok: true, appt: row};
+  }
+
   /* ---------- leader: editing cards ---------- */
   function rowFrom(it, store) {
     return {id: it.id, wk: it.wk, kind: it.kind, title: it.title, desc: it.desc || '', links: it.links || [], checks: it.checks || [],
@@ -340,15 +366,15 @@ var CORE = (function () {
   /* One digest for the leader and one for each agent who has something due. Nothing is sent from here. */
   function reminderEmails(store) {
     var agents = store.load('agents').map(cleanAgent), progress = store.load('progress'), t = today(store), set = settingsObj(store);
-    var out = [], foot = set.appUrl ? '\n\nOpen the app: ' + set.appUrl : '', syl = syllabus(store);
-    var lead = KS.alerts(agents, syl, progress, t);
+    var out = [], foot = set.appUrl ? '\n\nOpen the app: ' + set.appUrl : '', syl = syllabus(store), appts = store.load('appts');
+    var lead = KS.alerts(agents, syl, progress, t, null, appts);
     if (set.leaderEmail && lead.length) {
       out.push({to: set.leaderEmail, who: 'Leader', subject: '90Days Kick Start: ' + lead.length + ' item(s) need you (' + t + ')',
         body: 'Good morning ' + (set.leaderName || '') + ',\n\n' + lead.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES); }).join('\n') + foot});
     }
     agents.forEach(function (a) {
       if (!a.active || !a.email) return;
-      var mineA = KS.alerts(agents, syl, progress, t, a.id).filter(function (x) { return x.type !== 'review'; });
+      var mineA = KS.alerts(agents, syl, progress, t, a.id, appts).filter(function (x) { return x.type !== 'review'; });
       if (!mineA.length) return;
       out.push({to: a.email, who: a.name, subject: '90Days Kick Start: your next steps (' + t + ')',
         body: 'Hi ' + a.name + ',\n\n' + mineA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES, true, set.leaderName); }).join('\n') + foot});

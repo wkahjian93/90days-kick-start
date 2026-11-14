@@ -16,6 +16,8 @@
 - **Agent cards** are sorted with the most at-risk first. Each shows day X of 90, % approved, items waiting review, overdue items and the next training.
   - *On track*: nothing overdue. *Behind*: 1–2 overdue. *At risk*: 3+ overdue, or anything more than 7 days late.
 
+**Next appointment for each week:** every week column has a 📅 button. You or the agent can set the date, time and a note (e.g. SG FARLIM). Both see it, and the "arrange training" alert turns into "training booked". Tap **📆 Save + open REDEFINE Calendar** to open the calendar with the event filled in, then tap **Add** there.
+
 **Reviewing homework:** tap a card to see the notes, checklist and uploaded photos or files. Then choose:
 - **✓ Approve**. On a training card the button says **✓ Training done**: tap it after you've run the session.
 - **↺ Ask to redo**. You must write what to fix, and the agent sees your comment.

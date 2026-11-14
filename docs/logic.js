@@ -83,17 +83,27 @@ var KS = (function () {
     return null;
   }
 
+  // The appointment set for one agent's week, if any.
+  function apptFor(appts, agentId, wk) {
+    return (appts || []).filter(function (x) { return x.agentId === agentId && +x.wk === +wk && validDate(x.date); })[0] || null;
+  }
+
   /* Alerts for the leader (all agents) or one agent.
-     type: arrange | review | overdue | redo | soon | nostart */
-  function alerts(agents, syllabus, progress, today, forAgentId) {
+     type: arrange | booked | review | overdue | redo | soon | nostart
+     A week whose training already has an appointment today or later shows "booked" (only when it is near) instead of "arrange". */
+  function alerts(agents, syllabus, progress, today, forAgentId, appts) {
     var out = [];
     agents.forEach(function (a) {
       if (a.active === false || (forAgentId && a.id !== forAgentId)) return;
       if (!validDate(a.start)) { if (!forAgentId) out.push({type: 'nostart', agent: a}); return; }
       var pm = progressMap(progress, a.id), sm = summary(a, syllabus, progress, today);
       if (sm.health === 'complete' || sm.day < 1) return;
-      var nt = sm.nextTraining;
-      if (nt && nt.daysLeft != null && nt.daysLeft <= SOON_DAYS) out.push({type: 'arrange', agent: a, wk: nt.wk, due: nt.due, daysLeft: nt.daysLeft, items: nt.items});
+      var nt = sm.nextTraining, ap = nt && apptFor(appts, a.id, nt.wk);
+      if (ap && ap.date >= today) {
+        var inDays = diffDays(today, ap.date);
+        if (inDays <= SOON_DAYS) out.push({type: 'booked', agent: a, wk: nt.wk, date: ap.date, time: ap.time || '', note: ap.note || '', daysLeft: inDays, items: nt.items});
+      }
+      else if (nt && nt.daysLeft != null && nt.daysLeft <= SOON_DAYS) out.push({type: 'arrange', agent: a, wk: nt.wk, due: nt.due, daysLeft: nt.daysLeft, items: nt.items});
       forAgent(syllabus, a).forEach(function (it) {
         var s = itemState(a, it, pm[it.id], today), due = dueDate(a, it);
         if (s === 'submitted' && !forAgentId) out.push({type: 'review', agent: a, item: it});
@@ -103,7 +113,7 @@ var KS = (function () {
         else if (s === 'soon' && forAgentId && it.kind !== 'training') out.push({type: 'soon', agent: a, item: it, due: due, daysLeft: diffDays(today, due)});
       });
     });
-    var rank = {arrange: 0, review: 1, redo: 2, overdue: 3, soon: 4, nostart: 5};
+    var rank = {arrange: 0, booked: 1, review: 2, redo: 3, overdue: 4, soon: 5, nostart: 6};
     return out.sort(function (x, y) { return rank[x.type] - rank[y.type]; });
   }
 
@@ -112,16 +122,25 @@ var KS = (function () {
   function list(items) { return items.length > 3 ? items.slice(0, 3).join(', ') + ' +' + (items.length - 3) + ' more' : items.join(', '); }
 
   function weekLabel(wk, names) { return (names && names[wk]) || ('Week ' + wk); }
+  function when(date, time) {
+    var t = /^(\d{1,2}):(\d{2})$/.exec(time || ''), d = nice(date);
+    if (!t) return d;
+    var h = +t[1], ap = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12;
+    return d + ', ' + h + (t[2] === '00' ? '' : ':' + t[2]) + ap;
+  }
+  function bookedDay(n) { return n === 0 ? 'today' : n === 1 ? 'tomorrow' : 'in ' + n + ' days'; }
 
   // mine = written to the agent themself; leaderName is used in that case
   function alertText(al, names, mine, leaderName) {
     var who = al.agent.name;
     if (mine) switch (al.type) {
       case 'arrange': return 'Book your ' + weekLabel(al.wk, names) + ' training with ' + (leaderName || 'your leader') + ' by ' + nice(al.due) + (al.daysLeft < 0 ? ' (' + (-al.daysLeft) + ' days late)' : '') + ': ' + list(al.items);
+      case 'booked': return 'Your ' + weekLabel(al.wk, names) + ' training is ' + bookedDay(al.daysLeft) + ': ' + when(al.date, al.time) + (al.note ? ' (' + al.note + ')' : '');
       case 'redo': return 'Redo "' + al.item.title + '"' + (al.comment ? ': ' + al.comment : '');
       case 'overdue': return '"' + al.item.title + '" is overdue by ' + al.late + ' day' + (al.late === 1 ? '' : 's');
     }
     switch (al.type) {
+      case 'booked': return who + ': ' + weekLabel(al.wk, names) + ' training ' + bookedDay(al.daysLeft) + ', ' + when(al.date, al.time) + (al.note ? ' (' + al.note + ')' : '');
       case 'arrange': return 'Arrange ' + weekLabel(al.wk, names) + ' training for ' + who + ' by ' + nice(al.due) + (al.daysLeft < 0 ? ' (' + (-al.daysLeft) + ' days late)' : '') + ': ' + list(al.items);
       case 'review': return who + ' submitted "' + al.item.title + '": review it';
       case 'redo': return who + ': redo "' + al.item.title + '"' + (al.comment ? ' (' + al.comment + ')' : '');
@@ -133,7 +152,7 @@ var KS = (function () {
   }
 
   return {validDate: validDate, addDays: addDays, diffDays: diffDays, todayMYT: todayMYT, dueDate: dueDate, dayNumber: dayNumber,
-    itemState: itemState, progressMap: progressMap, forAgent: forAgent, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, SOON_DAYS: SOON_DAYS};
+    itemState: itemState, progressMap: progressMap, forAgent: forAgent, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, when: when, apptFor: apptFor, SOON_DAYS: SOON_DAYS};
 })();
 
 if (typeof module !== 'undefined') module.exports = KS;

@@ -14,7 +14,7 @@
     already_approved: 'This item is already approved. Ask your leader to reset it if you need to change it.', empty_submission: 'Add a note, a file or a tick before submitting.',
     file_type: 'That file type is not accepted. Use a photo, PDF, audio, video or Office file.', file_size: 'A file is too large. Keep each file under 8 MB.',
     too_many_files: 'Too many files. Up to 5 at a time and 10 per item.', unknown_item: 'This syllabus item no longer exists.', not_found: 'Not found. Refresh and try again.',
-    forbidden: 'You do not have access to that.', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
+    forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
     invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
   };
@@ -171,7 +171,7 @@
     st.screen = 'team';
     var d = st.data, t = today(), act = agents().filter(function (a) { return a.active; });
     var sums = {}; agents().forEach(function (a) { sums[a.id] = KS.summary(a, syl(), d.progress, t); });
-    var al = KS.alerts(agents(), syl(), d.progress, t);
+    var al = KS.alerts(agents(), syl(), d.progress, t, null, d.appts);
     var avg = act.length ? Math.round(act.reduce(function (s, a) { return s + sums[a.id].pct; }, 0) / act.length) : 0;
     var waiting = act.reduce(function (s, a) { return s + sums[a.id].waiting; }, 0), over = act.reduce(function (s, a) { return s + sums[a.id].overdue; }, 0);
     var shown = st.showAllAlerts ? al : al.slice(0, 8);
@@ -205,7 +205,7 @@
     document.getElementById('menu').onclick = leaderMenu;
   }
 
-  var ALERT_TAG = {arrange: 'Arrange training', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
+  var ALERT_TAG = {arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
   function alertRow(x) {
     var mine = st.role !== 'leader', tag = mine && x.type === 'arrange' ? 'Book training' : ALERT_TAG[x.type];
     return '<div class="alert ' + x.type + '" data-a="' + esc(x.agent.id) + '" data-i="' + esc(x.item ? x.item.id : '') + '" data-w="' + (x.wk || '') + '"><span class="dot"></span><div class="txt">' +
@@ -224,7 +224,8 @@
       '<div class="meta">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · ' + wkName(s.week)) : 'Start date missing') + '</div>' +
       '<div class="bar"><i style="width:' + s.pct + '%"></i></div>' +
       '<div class="nums"><span><b>' + s.pct + '%</b> done (' + s.done + '/' + s.required + ')</span><span><b style="color:var(--blue)">' + s.waiting + '</b> to review</span><span><b style="color:var(--red)">' + s.overdue + '</b> overdue</span>' + (s.awards ? '<span>🏆 <b>' + s.awards + '</b></span>' : '') + '</div>' +
-      (a.active && nt && nt.due ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> by ' + fmt(nt.due) + (nt.daysLeft < 0 ? ' <span class="chip overdue">' + (-nt.daysLeft) + 'd late</span>' : nt.daysLeft <= KS.SOON_DAYS ? ' <span class="chip soon">arrange now</span>' : '') + '</div>' : '') +
+      (a.active && nt && apptOf(a, nt.wk) ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + ' <span class="chip approved">booked</span></div>' :
+       a.active && nt && nt.due ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> by ' + fmt(nt.due) + (nt.daysLeft < 0 ? ' <span class="chip overdue">' + (-nt.daysLeft) + 'd late</span>' : nt.daysLeft <= KS.SOON_DAYS ? ' <span class="chip soon">arrange now</span>' : '') + '</div>' : '') +
       (s.unmatched ? '<div class="note" style="margin-top:6px">' + s.unmatched + ' saved record(s) belong to items no longer in the syllabus (kept, not shown).</div>' : '') +
       '</div>';
   }
@@ -260,7 +261,7 @@
     if (!leader) KS.forAgent(syl(), a).forEach(function (it) { if (weeks.indexOf(it.wk) < 0) weeks.push(it.wk); });
     weeks.sort(function (x, y) { return x - y; });
 
-    var myAlerts = leader ? [] : KS.alerts(agents(), syl(), d.progress, t, a.id);
+    var myAlerts = leader ? [] : KS.alerts(agents(), syl(), d.progress, t, a.id, d.appts);
     var html = topBar(leader ? a.name : 'My 90 Days', leader ? '90Days Kick Start' : 'Hi ' + a.name,
       leader ? '<button class="icon" id="back" aria-label="Back">←</button>' : '',
       '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
@@ -269,7 +270,7 @@
       '<div style="min-width:0"><h2>' + esc(a.name) + ' <span class="chip ' + (a.active ? s.health : 'archived') + '">' + HEALTH[a.active ? s.health : 'archived'] + '</span></h2>' +
       '<div class="sub">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · started ' + fmt(a.start)) : 'Start date missing: ' + (leader ? 'tap Edit agent to set it' : 'ask your leader to set it')) +
       ' · ' + s.done + '/' + s.required + ' approved' + (s.waiting ? ' · ' + s.waiting + ' waiting review' : '') + '</div>' +
-      (nt && nt.due ? '<div class="next">Next training: ' + wkName(nt.wk) + ' by ' + fmt(nt.due) + '</div>' : '') + '</div></div></div>' +
+      (nt && apptOf(a, nt.wk) ? '<div class="next">Next training: ' + wkName(nt.wk) + ' · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + '</div>' : nt && nt.due ? '<div class="next">Next training: ' + wkName(nt.wk) + ' by ' + fmt(nt.due) + ' · not booked yet</div>' : '') + '</div></div></div>' +
       '<div class="tabs" id="tabs"><button data-t="board" class="' + (st.tab === 'board' ? 'on' : '') + '">Syllabus</button><button data-t="activity" class="' + (st.tab === 'activity' ? 'on' : '') + '">Activity A·O·P·F·C</button>' +
       (leader ? '<button data-t="edit">Edit agent</button>' : '') +
       (st.tab === 'board' ? weeks.map(function (w) { return '<button data-w="' + w + '"><span class="d ' + weekDot(a, w, pm, t) + '"></span>' + esc(shortWk(w)) + '</button>'; }).join('') : '') + '</div>';
@@ -289,6 +290,7 @@
     });
     $app.querySelectorAll('#tabs [data-w]').forEach(function (b) { b.onclick = function () { scrollToWeek(+b.dataset.w); }; });
     $app.querySelectorAll('.card').forEach(function (c) { c.onclick = function () { openItem(a.id, c.dataset.id); }; });
+    $app.querySelectorAll('[data-appt]').forEach(function (b) { b.onclick = function () { apptSheet(a, +b.dataset.appt); }; });
     $app.querySelectorAll('[data-addcard]').forEach(function (b) { b.onclick = function () { editCard(null, {wk: +b.dataset.addcard, forAgent: a}); }; });
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w); }; });
     if (st.tab === 'activity') bindActivity(a);
@@ -325,9 +327,79 @@
     var dueDay = its.length ? its[0].due : defaultDue(w), due = w !== 13 ? KS.dueDate(a, {due: dueDay}) : null;
     return '<div class="col" data-col="' + w + '"><h4><span>' + esc(wkName(w)) + '</span><span class="note">' + done + '/' + its.length + '</span></h4>' +
       '<div class="cmeta">' + (w === 0 ? 'Set up during your first weeks' : w === 13 ? 'Achievements to aim for by day 90' : due ? 'Due ' + fmt(due) + ' (day ' + dueDay + ')' : 'Due day ' + dueDay) + '</div>' +
+      (w !== 13 ? apptButton(a, w) : '') +
       its.map(function (it) { return cardHtml(a, it, pm[it.id], t); }).join('') +
       (!its.length ? '<div class="note" style="padding:6px 4px 10px">No cards in this week yet.</div>' : '') +
       (st.role === 'leader' ? '<button class="addcard" data-addcard="' + w + '">＋ Add card</button>' : '') + '</div>';
+  }
+
+  /* ---------- next appointment per week (leader and agent can both set it) ---------- */
+  var CAL_URL = 'https://wkahjian93.github.io/redefine-calendar/';
+  function apptOf(a, w) { return KS.apptFor(st.data && st.data.appts, a.id, w); }
+  function apptText(ap) { return KS.when(ap.date, ap.time) + (ap.note ? ' · ' + ap.note : ''); }
+  function apptButton(a, w) {
+    var ap = apptOf(a, w), past = ap && ap.date < today();
+    return '<button class="appt' + (ap ? (past ? ' past' : ' set') : '') + '" data-appt="' + w + '">' +
+      (ap ? '📅 <span><b>Next appointment</b><br>' + esc(apptText(ap)) + (past ? ' (passed)' : '') + '</span><i>Change</i>'
+          : '📅 <span>Set next appointment</span><i>＋</i>') + '</button>';
+  }
+  // Link that opens REDEFINE Calendar with a New event filled in; nothing is saved there until the person taps Add.
+  function calendarLink(a, w, date, time, note) {
+    var topics = KS.forAgent(syl(), a).filter(function (it) { return it.wk === w && it.kind === 'training'; }).map(function (it) { return it.title; });
+    var title = '90 Days Kick Start · ' + wkName(w) + (st.role === 'leader' ? ' · ' + a.name : ' training');
+    var notes = (topics.length ? 'Training: ' + topics.join(', ') + '\n' : '') + (note ? note + '\n' : '') +
+      'Agent: ' + a.name + '\nOpen 90Days Kick Start: ' + ((st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0]);
+    var q = 't=' + encodeURIComponent(title.slice(0, 120)) + '&d=' + encodeURIComponent(date) + (time ? '&s=' + encodeURIComponent(time) : '') + '&n=' + encodeURIComponent(notes.slice(0, 1400));
+    return CAL_URL + '#/new?' + q;
+  }
+  function apptSheet(a, w) {
+    var ap = apptOf(a, w), weekDue = KS.dueDate(a, {due: defaultDue(w)});
+    var dflt = ap ? ap.date : (weekDue && weekDue >= today() ? weekDue : today());
+    var topics = KS.forAgent(syl(), a).filter(function (it) { return it.wk === w && it.kind === 'training'; }).map(function (it) { return it.title; });
+    sheet('<h3>' + esc(wkName(w)) + ' · next appointment</h3>' +
+      '<p class="note">' + (st.role === 'leader' ? 'For ' + esc(a.name) + '. ' : '') + 'You and ' + (st.role === 'leader' ? 'the agent' : 'your leader') + ' both see this on the board.' +
+        (topics.length ? ' Training this week: ' + esc(KS.list(topics)) + '.' : '') + '</p>' +
+      (ap ? '<p class="note">Set by ' + esc(ap.by || '—') + ' · ' + fmtTime(ap.updated) + '</p>' : '') +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label class="f">Date</label><input type="date" id="ap-date" value="' + esc(dflt) + '"></div>' +
+      '<div><label class="f">Time (optional)</label><input type="time" id="ap-time" value="' + esc(ap ? ap.time : '') + '"></div></div>' +
+      '<label class="f">Note (optional)</label><input type="text" id="ap-note" maxlength="200" value="' + esc(ap ? ap.note : '') + '" placeholder="e.g. SG FARLIM, bring your prospect list">' +
+      '<div class="actions"><div class="btn-row"><button class="btn ghost" id="ap-save">Save</button>' +
+      '<a class="btn gold" id="ap-cal" target="_blank" rel="noopener">📆 Save + open REDEFINE Calendar</a></div>' +
+      (ap ? '<button class="btn ghost small" id="ap-clear" style="margin-top:8px;width:100%;color:var(--red)">Clear appointment…</button>' : '') +
+      '<p class="note" style="margin:8px 0 0">REDEFINE Calendar opens with the event filled in. Check it and tap <b>Add</b> there to save it. You need to be signed in to REDEFINE Calendar on this phone.</p></div>',
+      function (el, close) {
+        var v = function (k) { return el.querySelector('#ap-' + k).value.trim(); };
+        var cal = el.querySelector('#ap-cal');
+        function sync() { cal.href = calendarLink(a, w, v('date'), v('time'), v('note')); }
+        ['date', 'time', 'note'].forEach(function (k) { el.querySelector('#ap-' + k).addEventListener('input', sync); });
+        sync();
+        function valid() {
+          if (!KS.validDate(v('date'))) { toast('Choose a date.', true); return false; }
+          if (v('date') < today() && !(ap && ap.date === v('date'))) { toast('That date has already passed. Pick today or later.', true); return false; }
+          return true;
+        }
+        async function save(quiet) {
+          try {
+            await api('appt', {agentId: a.id, wk: w, date: v('date'), time: v('time'), note: v('note')});
+            if (!quiet) { close(); toast('Appointment saved'); }
+            refresh();
+            return true;
+          } catch (e) { showErr(e); return false; }
+        }
+        el.querySelector('#ap-save').onclick = function () { if (valid()) save(false); };
+        // The calendar tab must open inside the tap itself (phones block it after a wait), so the save runs alongside.
+        cal.onclick = function (ev) {
+          if (!valid()) { ev.preventDefault(); return; }
+          sync();
+          setTimeout(close, 0);   // let the link open first
+          save(true).then(function (ok) { if (ok) toast('Appointment saved. Finish adding it in REDEFINE Calendar.'); });
+        };
+        var clr = el.querySelector('#ap-clear');
+        if (clr) clr.onclick = async function () {
+          if (!(await confirmBox('Clear this appointment?', esc(wkName(w)) + ': ' + esc(apptText(ap)) + '. Anything already in REDEFINE Calendar stays there; delete it in the calendar if needed.', 'Clear', true))) return;
+          try { await api('appt', {agentId: a.id, wk: w, clear: true}); close(); toast('Appointment cleared'); refresh(); } catch (e) { showErr(e); }
+        };
+      });
   }
 
   function cardHtml(a, it, p, t) {

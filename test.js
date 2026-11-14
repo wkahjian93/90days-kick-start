@@ -6,7 +6,7 @@ global.KS = require('./docs/logic.js');
 global.CORE = require('./docs/core.js');
 
 let clock = new Date('2026-11-04T01:00:00Z');   // 9am MYT
-const db = {agents: [], progress: [], activity: [], settings: [], log: [], syllabus: []}, files = {}, outbox = [];
+const db = {agents: [], progress: [], activity: [], settings: [], log: [], syllabus: [], appts: []}, files = {}, outbox = [];
 let failsN = 0, seq = 0;
 const store = {
   load: t => JSON.parse(JSON.stringify(db[t] || [])), save: (t, r) => { db[t] = JSON.parse(JSON.stringify(r)); },
@@ -194,6 +194,41 @@ ok('every training link opens the REDEFINE Agent Portal, none go to Google', () 
   assert.equal(links.length, 23);
   links.forEach(l => assert.ok(l.u.startsWith('https://redefine.solutions/portal/?p=lesson&id=') && /^[a-z0-9-]+$/.test(l.u.split('id=')[1]), l.t));
   assert.ok(!/sites.google|youtu.?be|drive.google/.test(JSON.stringify(SYLLABUS)));
+});
+
+ok('leader and agent can set the next appointment for each week; alerts show it as booked', () => {
+  const a = call({op: 'addAgent', code: L, name: 'Appt Tester', start: '2026-10-28'}).agent;   // day 8: Week 1 training due 3 Nov, overdue
+  const b = call({op: 'addAgent', code: L, name: 'Appt Other', start: '2026-10-28'}).agent;
+  const board = () => call({op: 'board', code: L});
+  let al = KS.alerts(board().agents, board().syllabus, board().progress, '2026-11-04', null, board().appts).filter(x => x.agent.id === a.id);
+  assert.ok(al.some(x => x.type === 'arrange' && x.wk === 1));
+  // messy input refused
+  err({op: 'appt', code: a.code, wk: 1, date: '5/11/2026'}, 'bad_date');
+  err({op: 'appt', code: a.code, wk: 1, date: '2026-11-05', time: '25:00'}, 'bad_time');
+  err({op: 'appt', code: a.code, wk: 20, date: '2026-11-05'}, 'bad_week');
+  // agent books Week 1 for themself
+  call({op: 'appt', code: a.code, wk: 1, date: '2026-11-05', time: '20:00', note: 'SG FARLIM'});
+  assert.equal(call({op: 'mine', code: a.code}).appts.length, 1);
+  assert.equal(call({op: 'mine', code: b.code}).appts.length, 0);          // agents only see their own
+  al = KS.alerts(board().agents, board().syllabus, board().progress, '2026-11-04', null, board().appts).filter(x => x.agent.id === a.id);
+  assert.ok(!al.some(x => x.type === 'arrange' && x.wk === 1));
+  const bk = al.find(x => x.type === 'booked');
+  assert.equal(KS.alertText(bk, WEEK_NAMES), 'Appt Tester: Week 1 training tomorrow, 5 Nov, 8pm (SG FARLIM)');
+  assert.equal(KS.alertText(bk, WEEK_NAMES, true), 'Your Week 1 training is tomorrow: 5 Nov, 8pm (SG FARLIM)');
+  // an agent cannot book for someone else: the agentId is ignored, it is always their own
+  call({op: 'appt', code: a.code, agentId: b.id, wk: 2, date: '2026-11-10'});
+  assert.equal(call({op: 'mine', code: b.code}).appts.length, 0);
+  // leader changes it (one per week, replaced) and can clear it
+  call({op: 'appt', code: L, agentId: a.id, wk: 1, date: '2026-11-06', time: '', note: ''});
+  assert.equal(board().appts.filter(x => x.agentId === a.id && +x.wk === 1).length, 1);
+  assert.equal(board().appts.find(x => x.agentId === a.id && +x.wk === 1).by, 'Leader');
+  call({op: 'appt', code: L, agentId: a.id, wk: 1, clear: true});
+  assert.ok(!board().appts.some(x => x.agentId === a.id && +x.wk === 1));
+  // a passed appointment brings back "arrange" while the training is still not done
+  call({op: 'appt', code: L, agentId: a.id, wk: 1, date: '2026-11-02'});
+  al = KS.alerts(board().agents, board().syllabus, board().progress, '2026-11-04', null, board().appts).filter(x => x.agent.id === a.id);
+  assert.ok(al.some(x => x.type === 'arrange' && x.wk === 1));
+  assert.ok(db.log.some(l => l.action === 'set appointment') && db.log.some(l => l.action === 'cleared appointment'));
 });
 
 ok('locks out after 20 wrong codes', () => {

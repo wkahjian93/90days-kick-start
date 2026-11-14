@@ -185,17 +185,27 @@ var KS = (function () {
     return null;
   }
 
+  // The appointment set for one agent's week, if any.
+  function apptFor(appts, agentId, wk) {
+    return (appts || []).filter(function (x) { return x.agentId === agentId && +x.wk === +wk && validDate(x.date); })[0] || null;
+  }
+
   /* Alerts for the leader (all agents) or one agent.
-     type: arrange | review | overdue | redo | soon | nostart */
-  function alerts(agents, syllabus, progress, today, forAgentId) {
+     type: arrange | booked | review | overdue | redo | soon | nostart
+     A week whose training already has an appointment today or later shows "booked" (only when it is near) instead of "arrange". */
+  function alerts(agents, syllabus, progress, today, forAgentId, appts) {
     var out = [];
     agents.forEach(function (a) {
       if (a.active === false || (forAgentId && a.id !== forAgentId)) return;
       if (!validDate(a.start)) { if (!forAgentId) out.push({type: 'nostart', agent: a}); return; }
       var pm = progressMap(progress, a.id), sm = summary(a, syllabus, progress, today);
       if (sm.health === 'complete' || sm.day < 1) return;
-      var nt = sm.nextTraining;
-      if (nt && nt.daysLeft != null && nt.daysLeft <= SOON_DAYS) out.push({type: 'arrange', agent: a, wk: nt.wk, due: nt.due, daysLeft: nt.daysLeft, items: nt.items});
+      var nt = sm.nextTraining, ap = nt && apptFor(appts, a.id, nt.wk);
+      if (ap && ap.date >= today) {
+        var inDays = diffDays(today, ap.date);
+        if (inDays <= SOON_DAYS) out.push({type: 'booked', agent: a, wk: nt.wk, date: ap.date, time: ap.time || '', note: ap.note || '', daysLeft: inDays, items: nt.items});
+      }
+      else if (nt && nt.daysLeft != null && nt.daysLeft <= SOON_DAYS) out.push({type: 'arrange', agent: a, wk: nt.wk, due: nt.due, daysLeft: nt.daysLeft, items: nt.items});
       forAgent(syllabus, a).forEach(function (it) {
         var s = itemState(a, it, pm[it.id], today), due = dueDate(a, it);
         if (s === 'submitted' && !forAgentId) out.push({type: 'review', agent: a, item: it});
@@ -205,7 +215,7 @@ var KS = (function () {
         else if (s === 'soon' && forAgentId && it.kind !== 'training') out.push({type: 'soon', agent: a, item: it, due: due, daysLeft: diffDays(today, due)});
       });
     });
-    var rank = {arrange: 0, review: 1, redo: 2, overdue: 3, soon: 4, nostart: 5};
+    var rank = {arrange: 0, booked: 1, review: 2, redo: 3, overdue: 4, soon: 5, nostart: 6};
     return out.sort(function (x, y) { return rank[x.type] - rank[y.type]; });
   }
 
@@ -214,16 +224,25 @@ var KS = (function () {
   function list(items) { return items.length > 3 ? items.slice(0, 3).join(', ') + ' +' + (items.length - 3) + ' more' : items.join(', '); }
 
   function weekLabel(wk, names) { return (names && names[wk]) || ('Week ' + wk); }
+  function when(date, time) {
+    var t = /^(\d{1,2}):(\d{2})$/.exec(time || ''), d = nice(date);
+    if (!t) return d;
+    var h = +t[1], ap = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12;
+    return d + ', ' + h + (t[2] === '00' ? '' : ':' + t[2]) + ap;
+  }
+  function bookedDay(n) { return n === 0 ? 'today' : n === 1 ? 'tomorrow' : 'in ' + n + ' days'; }
 
   // mine = written to the agent themself; leaderName is used in that case
   function alertText(al, names, mine, leaderName) {
     var who = al.agent.name;
     if (mine) switch (al.type) {
       case 'arrange': return 'Book your ' + weekLabel(al.wk, names) + ' training with ' + (leaderName || 'your leader') + ' by ' + nice(al.due) + (al.daysLeft < 0 ? ' (' + (-al.daysLeft) + ' days late)' : '') + ': ' + list(al.items);
+      case 'booked': return 'Your ' + weekLabel(al.wk, names) + ' training is ' + bookedDay(al.daysLeft) + ': ' + when(al.date, al.time) + (al.note ? ' (' + al.note + ')' : '');
       case 'redo': return 'Redo "' + al.item.title + '"' + (al.comment ? ': ' + al.comment : '');
       case 'overdue': return '"' + al.item.title + '" is overdue by ' + al.late + ' day' + (al.late === 1 ? '' : 's');
     }
     switch (al.type) {
+      case 'booked': return who + ': ' + weekLabel(al.wk, names) + ' training ' + bookedDay(al.daysLeft) + ', ' + when(al.date, al.time) + (al.note ? ' (' + al.note + ')' : '');
       case 'arrange': return 'Arrange ' + weekLabel(al.wk, names) + ' training for ' + who + ' by ' + nice(al.due) + (al.daysLeft < 0 ? ' (' + (-al.daysLeft) + ' days late)' : '') + ': ' + list(al.items);
       case 'review': return who + ' submitted "' + al.item.title + '": review it';
       case 'redo': return who + ': redo "' + al.item.title + '"' + (al.comment ? ' (' + al.comment + ')' : '');
@@ -235,7 +254,7 @@ var KS = (function () {
   }
 
   return {validDate: validDate, addDays: addDays, diffDays: diffDays, todayMYT: todayMYT, dueDate: dueDate, dayNumber: dayNumber,
-    itemState: itemState, progressMap: progressMap, forAgent: forAgent, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, SOON_DAYS: SOON_DAYS};
+    itemState: itemState, progressMap: progressMap, forAgent: forAgent, summary: summary, alerts: alerts, alertText: alertText, weekLabel: weekLabel, nice: nice, list: list, when: when, apptFor: apptFor, SOON_DAYS: SOON_DAYS};
 })();
 
 
@@ -252,6 +271,8 @@ var CORE = (function () {
     settings: ['key', 'value'],
     log: ['at', 'by', 'action', 'agentId', 'itemId', 'detail'],
     // Leader's card edits: a row with a built-in id changes that card; any other id is a new card.
+    // Next training appointment for one agent's week, set by the leader or the agent.
+    appts: ['agentId', 'wk', 'date', 'time', 'note', 'by', 'updated'],
     syllabus: ['id', 'wk', 'kind', 'title', 'desc', 'links', 'checks', 'due', 'summary', 'agentId', 'order', 'removed', 'updated']
   };
   var JSON_COLS = {checks: 1, files: 1, links: 1};
@@ -344,6 +365,7 @@ var CORE = (function () {
       case 'submit': return saveWork(q, store, me, true);
       case 'activity': return saveActivity(q, store, me);
       case 'file': return getFile(q, store, me);
+      case 'appt': return saveAppt(q, store, me, me.name);
     }
     fail('forbidden');
   }
@@ -353,6 +375,7 @@ var CORE = (function () {
       agent: publicAgent(me),
       progress: store.load('progress').filter(function (p) { return p.agentId === me.id; }),
       activity: store.load('activity').filter(function (r) { return r.agentId === me.id; }),
+      appts: store.load('appts').filter(function (r) { return r.agentId === me.id; }),
       syllabus: KS.forAgent(syllabus(store), me),
       settings: {leaderName: settingsObj(store).leaderName || 'Your leader'},
       today: today(store)
@@ -419,6 +442,7 @@ var CORE = (function () {
       case 'previewReminders': return {emails: reminderEmails(store)};
       case 'sendReminders': return sendReminders(q, store);
       case 'file': return getFile(q, store, null);
+      case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
       case 'restoreItem': return removeItem(q, store, false);
@@ -433,6 +457,7 @@ var CORE = (function () {
       agents: store.load('agents').map(cleanAgent),
       progress: store.load('progress'),
       activity: store.load('activity'),
+      appts: store.load('appts'),
       syllabus: all.filter(function (it) { return !it.removed; }),
       removedItems: all.filter(function (it) { return it.removed; }),
       settings: settingsObj(store),
@@ -518,6 +543,26 @@ var CORE = (function () {
     return {ok: true, settings: settingsObj(store)};
   }
 
+  /* ---------- next appointment per week (leader or the agent) ---------- */
+  function saveAppt(q, store, agent, by) {
+    var wk = Math.round(+q.wk), rows = store.load('appts');
+    if (!(wk >= 0 && wk <= 13)) fail('bad_week');
+    rows = rows.filter(function (r) { return !(r.agentId === agent.id && +r.wk === wk); });
+    if (q.clear === true) {
+      store.save('appts', rows);
+      log(store, by, 'cleared appointment', agent.id, '', KS.weekLabel(wk, WEEK_NAMES));
+      return {ok: true, appt: null};
+    }
+    var date = str(q.date, 10), time = str(q.time, 5), note = str(q.note, 200);
+    if (!KS.validDate(date)) fail('bad_date');
+    if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) fail('bad_time');
+    var row = {agentId: agent.id, wk: wk, date: date, time: time, note: note, by: by, updated: nowIso(store)};
+    rows.push(row);
+    store.save('appts', rows);
+    log(store, by, 'set appointment', agent.id, '', KS.weekLabel(wk, WEEK_NAMES) + ': ' + KS.when(date, time) + (note ? ' (' + note + ')' : ''));
+    return {ok: true, appt: row};
+  }
+
   /* ---------- leader: editing cards ---------- */
   function rowFrom(it, store) {
     return {id: it.id, wk: it.wk, kind: it.kind, title: it.title, desc: it.desc || '', links: it.links || [], checks: it.checks || [],
@@ -582,15 +627,15 @@ var CORE = (function () {
   /* One digest for the leader and one for each agent who has something due. Nothing is sent from here. */
   function reminderEmails(store) {
     var agents = store.load('agents').map(cleanAgent), progress = store.load('progress'), t = today(store), set = settingsObj(store);
-    var out = [], foot = set.appUrl ? '\n\nOpen the app: ' + set.appUrl : '', syl = syllabus(store);
-    var lead = KS.alerts(agents, syl, progress, t);
+    var out = [], foot = set.appUrl ? '\n\nOpen the app: ' + set.appUrl : '', syl = syllabus(store), appts = store.load('appts');
+    var lead = KS.alerts(agents, syl, progress, t, null, appts);
     if (set.leaderEmail && lead.length) {
       out.push({to: set.leaderEmail, who: 'Leader', subject: '90Days Kick Start: ' + lead.length + ' item(s) need you (' + t + ')',
         body: 'Good morning ' + (set.leaderName || '') + ',\n\n' + lead.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES); }).join('\n') + foot});
     }
     agents.forEach(function (a) {
       if (!a.active || !a.email) return;
-      var mineA = KS.alerts(agents, syl, progress, t, a.id).filter(function (x) { return x.type !== 'review'; });
+      var mineA = KS.alerts(agents, syl, progress, t, a.id, appts).filter(function (x) { return x.type !== 'review'; });
       if (!mineA.length) return;
       out.push({to: a.email, who: a.name, subject: '90Days Kick Start: your next steps (' + t + ')',
         body: 'Hi ' + a.name + ',\n\n' + mineA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES, true, set.leaderName); }).join('\n') + foot});
