@@ -40,9 +40,10 @@
     if (!on && el) el.remove();
   }
 
-  async function api(op, body) {
-    var q = Object.assign({op: op, code: st.code}, body || {});
-    busy(true);
+  // opts.quiet: no loading spinner (for changes already shown on screen)
+  async function api(op, body, opts) {
+    var q = Object.assign({op: op, code: st.code}, body || {}), quiet = opts && opts.quiet;
+    if (!quiet) busy(true);
     try {
       var r;
       if (st.demo) {
@@ -56,7 +57,23 @@
       }
       if (r.error) { var e2 = new Error(r.error); e2.code = r.error; throw e2; }
       return r;
-    } finally { busy(false); }
+    } finally { if (!quiet) busy(false); }
+  }
+
+  /* Show a change straight away, save it in the background, and undo it on screen if the save fails.
+     change(): edits st.data and returns nothing; send: [op, body]. */
+  var pendingSaves = 0;
+  function instant(change, op, body, okMsg) {
+    var backup = JSON.parse(JSON.stringify(st.data));
+    change(); rerender();
+    if (okMsg) toast(okMsg);
+    pendingSaves++;
+    return api(op, body, {quiet: true}).then(function () { pendingSaves--; return true; }, function (e) {
+      pendingSaves--;
+      st.data = backup; rerender();
+      toast('Not saved. ' + (ERR[e.code] || ('Please try again (' + (e.code || e.message) + ').')), true);
+      return false;
+    });
   }
   function showErr(e) { toast(ERR[e.code] || ('Something went wrong (' + (e.code || e.message) + ').'), true); }
 
@@ -149,8 +166,10 @@
     st.data = r;
   }
   async function refresh() {
+    var keepAppts = pendingSaves ? st.data && st.data.appts : null;   // an appointment still saving: keep what is on screen
     try { if (st.role === 'leader') await loadBoard(); else await loadMine(); }
     catch (e) { showErr(e); }
+    if (keepAppts && pendingSaves && st.data) st.data.appts = keepAppts;
     rerender();
   }
   function rerender() {
@@ -429,26 +448,26 @@
           if (v('date') < today() && !(ap && ap.date === v('date'))) { toast('That date has already passed. Pick today or later.', true); return false; }
           return true;
         }
-        async function save(quiet) {
-          try {
-            await api('appt', {agentId: a.id, wk: w, date: v('date'), time: v('time'), note: v('note')});
-            if (!quiet) { close(); toast('Appointment saved'); }
-            refresh();
-            return true;
-          } catch (e) { showErr(e); return false; }
+        // Instant: the board shows the new appointment at once; the server save runs in the background.
+        function others() { return (st.data.appts || []).filter(function (x) { return !(x.agentId === a.id && +x.wk === w); }); }
+        function save(msg) {
+          var row = {agentId: a.id, wk: w, date: v('date'), time: v('time'), note: v('note'),
+            by: st.role === 'leader' ? 'Leader' : a.name, updated: new Date().toISOString()};
+          return instant(function () { st.data.appts = others().concat([row]); },
+            'appt', {agentId: a.id, wk: w, date: row.date, time: row.time, note: row.note}, msg);
         }
-        el.querySelector('#ap-save').onclick = function () { if (valid()) save(false); };
+        el.querySelector('#ap-save').onclick = function () { if (!valid()) return; close(); save('Appointment saved'); };
         // The calendar tab must open inside the tap itself (phones block it after a wait), so the save runs alongside.
         cal.onclick = function (ev) {
           if (!valid()) { ev.preventDefault(); return; }
           sync();
-          setTimeout(close, 0);   // let the link open first
-          save(true).then(function (ok) { if (ok) toast('Appointment saved. Finish adding it in REDEFINE Calendar.'); });
+          setTimeout(function () { close(); save('Appointment saved. Finish adding it in REDEFINE Calendar.'); }, 0);   // let the link open first
         };
         var clr = el.querySelector('#ap-clear');
         if (clr) clr.onclick = async function () {
           if (!(await confirmBox('Clear this appointment?', esc(wkName(w)) + ': ' + esc(apptText(ap)) + '. Anything already in REDEFINE Calendar stays there; delete it in the calendar if needed.', 'Clear', true))) return;
-          try { await api('appt', {agentId: a.id, wk: w, clear: true}); close(); toast('Appointment cleared'); refresh(); } catch (e) { showErr(e); }
+          close();
+          instant(function () { st.data.appts = others(); }, 'appt', {agentId: a.id, wk: w, clear: true}, 'Appointment cleared');
         };
       });
   }
