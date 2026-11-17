@@ -1,7 +1,7 @@
 /* Sample mode: the real server rules (core.js) running on this phone's storage, with three made-up agents.
    Nothing leaves the phone and no email is sent; "sent" emails go to a sample outbox. */
 var DEMO = (function () {
-  var KEY = 'ks_demo_v1', LEADER = 'demo-leader';
+  var KEY = 'ks_demo_v2', LEADER = 'demo-leader';
   var db;
 
   function persist() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* storage full or blocked: keep in memory */ } }
@@ -11,17 +11,18 @@ var DEMO = (function () {
     db = {agents: [], progress: [], activity: [], settings: [
       {key: 'leaderName', value: 'Leader (sample)'}, {key: 'leaderEmail', value: 'leader@example.com'}, {key: 'emailAlerts', value: 'off'}
     ], log: [], files: {}, outbox: []};
-    function agent(id, name, code, daysAgo, email) {
-      db.agents.push({id: id, name: name, email: email, phone: '', start: KS.addDays(t, -daysAgo), code: code, active: true, created: at, note: 'Sample agent'});
+    function agent(id, name, code, daysAgo, email, introducer, kind) {
+      db.agents.push({id: id, name: name, email: email, phone: '', start: daysAgo == null ? '' : KS.addDays(t, -daysAgo), code: code, active: true, created: at, note: 'Sample agent', introducer: introducer || '', kind: kind || ''});
     }
+    agent('ASAMP09', 'Sam (sample senior)', 'SAMPLE09', null, 'sam@example.com', '', 'introducer');   // introducer account, no board
     function set(agentId, itemId, status, extra) {
       var it = SYLLABUS.filter(function (x) { return x.id === itemId; })[0];
       db.progress.push(Object.assign({agentId: agentId, itemId: itemId, status: status, checks: it.checks ? it.checks.map(function () { return status === 'approved'; }) : [],
         note: '', comment: '', files: [], updated: at, reviewed: status === 'approved' || status === 'redo' ? at : ''}, extra || {}));
     }
     agent('ASAMP01', 'Aiman (sample)', 'SAMPLE01', 39, 'aiman@example.com');      // Week 6, on track
-    agent('ASAMP02', 'Mei Ling (sample)', 'SAMPLE02', 19, 'meiling@example.com'); // Week 3, behind
-    agent('ASAMP03', 'Daniel (sample)', 'SAMPLE03', 5, 'daniel@example.com');     // Week 1, just started
+    agent('ASAMP02', 'Mei Ling (sample)', 'SAMPLE02', 19, 'meiling@example.com', 'ASAMP09'); // Week 3, behind
+    agent('ASAMP03', 'Daniel (sample)', 'SAMPLE03', 5, 'daniel@example.com', 'ASAMP01');     // Week 1, just started
 
     SYLLABUS.forEach(function (it) {
       if (it.kind === 'award') return;

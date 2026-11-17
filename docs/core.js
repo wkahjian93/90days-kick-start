@@ -5,7 +5,9 @@
 var CORE = (function () {
   var TABLES = {
     // grad: '' (not decided) | 'yes' (Graduated) | 'no' (Not graduated); set only by the leader
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote'],
+    // introducer: id of the account that brought this agent in ('' = the GM directly)
+    // kind: '' = new agent doing the 90 days | 'introducer' = senior account, no training board
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -81,8 +83,27 @@ var CORE = (function () {
 
   function cleanAgent(a) {
     a.active = !(a.active === false || a.active === 'false');
+    a.introducer = a.introducer || ''; a.kind = a.kind === 'introducer' ? 'introducer' : '';
     return a;
   }
+
+  /* Downline: everyone an account brought in, and everyone they brought in, and so on. Safe against loops. */
+  function downlineIds(agents, rootId) {
+    var out = {}, queue = [rootId];
+    while (queue.length) {
+      var id = queue.shift();
+      agents.forEach(function (x) { if (x.introducer === id && !out[x.id] && x.id !== rootId) { out[x.id] = true; queue.push(x.id); } });
+    }
+    return out;
+  }
+  // The agent `id`, if it is in the downline of `me`; otherwise refused.
+  function downlineAgent(store, me, id) {
+    var all = store.load('agents').map(cleanAgent), a = all.filter(function (x) { return x.id === id; })[0];
+    if (!a || !downlineIds(all, me.id)[a.id]) fail('forbidden');
+    return a;
+  }
+  // What an introducer may see about a downline agent: no GM notes.
+  function teamAgent(a) { var o = Object.assign({}, a); delete o.note; delete o.gradNote; return o; }
 
   function handle(q, store) {
     if (!q || typeof q !== 'object') fail('invalid_request');
@@ -96,23 +117,49 @@ var CORE = (function () {
   }
 
   // What an agent sees about themself (no leader note, no graduation note).
-  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || ''}; }
+  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || '', introducer: a.introducer || '', kind: a.kind === 'introducer' ? 'introducer' : ''}; }
 
-  /* ---------- agent ---------- */
+  /* ---------- agent (own board) and introducer (their downline) ---------- */
   function agentOp(q, store, me) {
+    var trainee = me.kind !== 'introducer';
     switch (q.op) {
-      case 'mine': return mine(store, me);
-      case 'save': return saveWork(q, store, me, false);
-      case 'submit': return saveWork(q, store, me, true);
-      case 'activity': return saveActivity(q, store, me);
+      case 'mine': if (!trainee) fail('forbidden'); return mine(store, me);
+      case 'save': if (!trainee) fail('forbidden'); return saveWork(q, store, me, false);
+      case 'submit': if (!trainee) fail('forbidden'); return saveWork(q, store, me, true);
+      case 'activity': if (!trainee) fail('forbidden'); return saveActivity(q, store, me);
       case 'file': return getFile(q, store, me);
-      case 'appt': return saveAppt(q, store, me, me.name);
+      case 'appt':
+        if (q.agentId && q.agentId !== me.id) return saveAppt(q, store, downlineAgent(store, me, str(q.agentId, 20)), me.name);
+        if (!trainee) fail('forbidden');
+        return saveAppt(q, store, me, me.name);
+      // introducer actions, always limited to their own downline
+      case 'team': return team(store, me);
+      case 'addAgent': return addAgent(q, store, me);
+      case 'updateAgent': downlineAgent(store, me, str(q.id, 20)); return updateAgent(q, store, me);
+      case 'review': downlineAgent(store, me, str(q.agentId, 20)); return review(q, store, me);
     }
     fail('forbidden');
   }
 
-  function mine(store, me) {
+  function team(store, me) {
+    var all = store.load('agents').map(cleanAgent), ids = downlineIds(all, me.id), mineOnly = function (r) { return ids[r.agentId]; };
     return {
+      me: publicAgent(me),
+      agents: all.filter(function (a) { return ids[a.id]; }).map(teamAgent),
+      progress: store.load('progress').filter(mineOnly),
+      activity: store.load('activity').filter(mineOnly),
+      appts: store.load('appts').filter(mineOnly),
+      syllabus: syllabus(store),
+      settings: {leaderName: settingsObj(store).leaderName || 'Your leader'},
+      log: store.load('log').filter(function (l) { return ids[l.agentId]; }).slice(-60).reverse(),
+      today: today(store)
+    };
+  }
+
+  function mine(store, me) {
+    var all = store.load('agents').map(cleanAgent);
+    return {
+      teamSize: Object.keys(downlineIds(all, me.id)).length,
       agent: publicAgent(me),
       progress: store.load('progress').filter(function (p) { return p.agentId === me.id; }),
       activity: store.load('activity').filter(function (r) { return r.agentId === me.id; }),
@@ -166,7 +213,8 @@ var CORE = (function () {
 
   function getFile(q, store, me) {
     var id = str(q.id, 100), rows = store.load('progress');
-    var owns = rows.some(function (p) { return (!me || p.agentId === me.id) && (p.files || []).some(function (f) { return f.id === id; }); });
+    var ids = me ? downlineIds(store.load('agents').map(cleanAgent), me.id) : null;
+    var owns = rows.some(function (p) { return (!me || p.agentId === me.id || ids[p.agentId]) && (p.files || []).some(function (f) { return f.id === id; }); });
     if (!owns) fail('not_found');
     return store.getFile(id);
   }
@@ -175,10 +223,10 @@ var CORE = (function () {
   function leaderOp(q, store) {
     switch (q.op) {
       case 'board': return board(store);
-      case 'addAgent': return addAgent(q, store);
-      case 'updateAgent': return updateAgent(q, store);
+      case 'addAgent': return addAgent(q, store, null);
+      case 'updateAgent': return updateAgent(q, store, null);
       case 'deleteAgent': return deleteAgent(q, store);
-      case 'review': return review(q, store);
+      case 'review': return review(q, store, null);
       case 'settings': return saveSettings(q, store);
       case 'previewReminders': return {emails: reminderEmails(store)};
       case 'sendReminders': return sendReminders(q, store);
@@ -208,38 +256,59 @@ var CORE = (function () {
     };
   }
 
-  function agentFields(q, a) {
+  // by = null for the GM, or the introducer making the change (who may not touch GM-only fields)
+  function agentFields(q, a, by) {
     if (q.name != null) a.name = str(q.name, 60);
     if (q.email != null) a.email = str(q.email, 120);
     if (q.phone != null) a.phone = str(q.phone, 30);
     if (q.start != null) a.start = str(q.start, 10);
-    if (q.note != null) a.note = str(q.note, 500);
+    if (q.note != null && !by) a.note = str(q.note, 500);
     if (!a.name) fail('name_required');
     if (a.start && !KS.validDate(a.start)) fail('bad_date');
     if (a.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.email)) fail('bad_email');
   }
 
-  function addAgent(q, store) {
-    var rows = store.load('agents'), a = {id: 'A' + newId(store, 6), code: '', active: true, created: nowIso(store), name: '', email: '', phone: '', start: '', note: ''};
-    agentFields(q, a);
+  // The GM may set who introduced an agent; an introducer that would create a loop is refused.
+  function setIntroducer(rows, a, id) {
+    id = str(id, 20);
+    if (!id) { a.introducer = ''; return; }
+    if (id === a.id || !rows.some(function (x) { return x.id === id; })) fail('bad_introducer');
+    if (downlineIds(rows.map(cleanAgent), a.id)[id]) fail('bad_introducer');
+    a.introducer = id;
+  }
+
+  function addAgent(q, store, by) {
+    var rows = store.load('agents').map(cleanAgent), a = {id: 'A' + newId(store, 6), code: '', active: true, created: nowIso(store), name: '', email: '', phone: '', start: '', note: '', introducer: '', kind: ''};
+    agentFields(q, a, by);
     if (rows.some(function (x) { return x.name.toLowerCase() === a.name.toLowerCase(); })) fail('duplicate_name');
+    if (by) a.introducer = by.id;                       // an introducer always adds into their own team, as a new agent
+    else { setIntroducer(rows, a, q.introducer); a.kind = q.kind === 'introducer' ? 'introducer' : ''; }
     do { a.code = newId(store, 8); } while (rows.some(function (x) { return x.code === a.code; }));
     rows.push(a);
     store.save('agents', rows);
-    log(store, 'Leader', 'added agent', a.id, '', a.name + ', start ' + (a.start || 'not set'));
-    return {ok: true, agent: a};
+    var intro = rows.filter(function (x) { return x.id === a.introducer; })[0];
+    log(store, by ? by.name : 'Leader', a.kind === 'introducer' ? 'added introducer account' : 'added agent', a.id, '',
+      a.name + (a.kind === 'introducer' ? '' : ', start ' + (a.start || 'not set')) + (intro ? ', introduced by ' + intro.name : ''));
+    return {ok: true, agent: by ? teamAgent(a) : a};
   }
 
   function findAgent(rows, id) { var a = rows.filter(function (x) { return x.id === id; })[0]; if (!a) fail('not_found'); return a; }
 
-  function updateAgent(q, store) {
-    var rows = store.load('agents'), a = findAgent(rows, str(q.id, 20)), before = a.start;
-    agentFields(q, a);
-    if (q.active != null) a.active = q.active === true;
+  function updateAgent(q, store, by) {
+    var rows = store.load('agents').map(cleanAgent), a = findAgent(rows, str(q.id, 20)), before = a.start, beforeIntro = a.introducer;
+    agentFields(q, a, by);
+    if (!by) {   // GM only: archive, account type, introducer
+      if (q.active != null) a.active = q.active === true;
+      if (q.kind != null) a.kind = q.kind === 'introducer' ? 'introducer' : '';
+      if (q.introducer != null) setIntroducer(rows, a, q.introducer);
+    }
     if (q.newCode === true) { do { a.code = newId(store, 8); } while (rows.some(function (x) { return x !== a && x.code === a.code; })); }
     store.save('agents', rows);
-    log(store, 'Leader', 'updated agent', a.id, '', (before !== a.start ? 'start ' + (before || '-') + ' to ' + a.start + '; ' : '') + (q.active != null ? (a.active ? 'reactivated' : 'archived') : '') + (q.newCode ? 'new sign-in code' : ''));
-    return {ok: true, agent: cleanAgent(a)};
+    var name = function (id) { var x = rows.filter(function (r) { return r.id === id; })[0]; return x ? x.name : 'GM'; };
+    log(store, by ? by.name : 'Leader', 'updated agent', a.id, '', (before !== a.start ? 'start ' + (before || '-') + ' to ' + a.start + '; ' : '') +
+      (!by && q.active != null ? (a.active ? 'reactivated' : 'archived') : '') + (q.newCode ? 'new sign-in code' : '') +
+      (beforeIntro !== a.introducer ? 'introducer ' + name(beforeIntro) + ' to ' + name(a.introducer) : ''));
+    return {ok: true, agent: by ? teamAgent(a) : a};
   }
 
   function deleteAgent(q, store) {
@@ -249,12 +318,14 @@ var CORE = (function () {
     prog.filter(function (p) { return p.agentId === a.id; }).forEach(function (p) { (p.files || []).forEach(function (f) { try { store.trashFile(f.id); } catch (e) {} }); });
     store.save('progress', prog.filter(function (p) { return p.agentId !== a.id; }));
     store.save('activity', store.load('activity').filter(function (r) { return r.agentId !== a.id; }));
+    // their own recruits move up to whoever introduced them, so nobody drops out of a team
+    rows.forEach(function (x) { if (x.introducer === a.id) x.introducer = a.introducer || ''; });
     store.save('agents', rows.filter(function (x) { return x !== a; }));
     log(store, 'Leader', 'deleted agent', a.id, '', a.name);
     return {ok: true};
   }
 
-  function review(q, store) {
+  function review(q, store, by) {
     var agents = store.load('agents'), a = findAgent(agents, str(q.agentId, 20)), item = itemById(store, str(q.itemId, 20), a);
     if (!item) fail('unknown_item');
     var decision = str(q.decision), comment = str(q.comment, 1000);
@@ -266,7 +337,7 @@ var CORE = (function () {
     if (comment || decision !== 'approve') p.comment = comment;
     p.reviewed = nowIso(store);
     store.save('progress', rows);
-    log(store, 'Leader', decision === 'approve' ? (item.kind === 'award' ? 'marked achieved' : 'approved') : decision === 'redo' ? 'asked to redo' : 'reset', a.id, item.id, comment);
+    log(store, by ? by.name : 'Leader', decision === 'approve' ? (item.kind === 'award' ? 'marked achieved' : 'approved') : decision === 'redo' ? 'asked to redo' : 'reset', a.id, item.id, comment);
     return {ok: true, progress: p};
   }
 
@@ -390,12 +461,18 @@ var CORE = (function () {
       out.push({to: set.leaderEmail, who: 'Leader', subject: '90Days Kick Start: ' + lead.length + ' item(s) need you (' + t + ')',
         body: 'Good morning ' + (set.leaderName || '') + ',\n\n' + lead.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES); }).join('\n') + foot});
     }
+    // One email per person: their own next steps (new agents) plus what their recruits need from them (introducers).
     agents.forEach(function (a) {
       if (!a.active || !a.email) return;
-      var mineA = KS.alerts(agents, syl, progress, t, a.id, appts).filter(function (x) { return x.type !== 'review'; });
-      if (!mineA.length) return;
-      out.push({to: a.email, who: a.name, subject: '90Days Kick Start: your next steps (' + t + ')',
-        body: 'Hi ' + a.name + ',\n\n' + mineA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES, true, set.leaderName); }).join('\n') + foot});
+      var mineA = a.kind === 'introducer' ? [] : KS.alerts(agents, syl, progress, t, a.id, appts).filter(function (x) { return x.type !== 'review'; });
+      var ids = downlineIds(agents, a.id);
+      var teamA = KS.alerts(agents.filter(function (x) { return ids[x.id]; }), syl, progress, t, null, appts).filter(function (x) { return x.type !== 'graduate'; });
+      if (!mineA.length && !teamA.length) return;
+      out.push({to: a.email, who: a.name, subject: '90Days Kick Start: ' + (teamA.length ? 'your recruits and next steps' : 'your next steps') + ' (' + t + ')',
+        body: 'Hi ' + a.name + ',\n\n' +
+          (mineA.length ? mineA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES, true, set.leaderName); }).join('\n') : '') +
+          (mineA.length && teamA.length ? '\n\n' : '') +
+          (teamA.length ? 'Your recruits:\n' + teamA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES); }).join('\n') : '') + foot});
     });
     return out;
   }

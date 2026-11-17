@@ -99,7 +99,7 @@ var KS = (function () {
   function alerts(agents, syllabus, progress, today, forAgentId, appts) {
     var out = [];
     agents.forEach(function (a) {
-      if (a.active === false || (forAgentId && a.id !== forAgentId)) return;
+      if (a.active === false || a.kind === 'introducer' || (forAgentId && a.id !== forAgentId)) return;
       if (!validDate(a.start)) { if (!forAgentId) out.push({type: 'nostart', agent: a}); return; }
       if (a.grad === 'yes' || a.grad === 'no') return;   // graduation decided: nothing more to chase
       var pm = progressMap(progress, a.id), sm = summary(a, syllabus, progress, today);

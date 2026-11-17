@@ -200,3 +200,8 @@ table.act tfoot td { font-weight: 700; border-bottom: 0; }
 .gradbar.yes .gb-in { background: linear-gradient(90deg, #FBF0D9, #FFF8EA); border-color: var(--gold); }
 .gradbar.ready .gb-in { border: 1.5px dashed var(--gold-d); }
 .gradbar.no .gb-in { color: var(--muted); }
+
+/* agent: switch between own board and recruits */
+.switchbar { display: flex; gap: 6px; padding: 8px 16px; background: var(--ink); border-top: 1px solid rgba(255,255,255,.08); }
+.switchbar button { flex: 1; border: 1px solid rgba(255,255,255,.18); background: transparent; color: #fff; border-radius: 10px; padding: 8px; font-weight: 600; font-size: 13.5px; cursor: pointer; }
+.switchbar button.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }

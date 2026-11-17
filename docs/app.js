@@ -2,7 +2,11 @@
 (function () {
   var API = (window.KS_CONFIG && window.KS_CONFIG.api) || '';
   var $app = document.getElementById('app');
-  var st = {demo: false, code: '', role: '', data: null, screen: '', agentId: '', tab: 'board'};
+  // view: 'mine' (an agent's own board) or 'team' (an agent looking after their recruits); the GM is always 'team'
+  var st = {demo: false, code: '', role: '', data: null, screen: '', agentId: '', tab: 'board', view: 'mine', me: null, teamSize: 0};
+  function isGM() { return st.role === 'leader'; }
+  // looking after someone else's board: the GM, or an introducer in My recruits
+  function mgr() { return st.role === 'leader' || st.view === 'team'; }
   var KIND = {training: 'Training', homework: 'Homework', task: 'Task', award: 'Award'};
   var STATE = {approved: 'Approved', submitted: 'Waiting review', redo: 'Redo', overdue: 'Overdue', soon: 'Due soon', open: 'Not started', goal: 'Goal'};
   var HEALTH = {ontrack: 'On track', behind: 'Behind', risk: 'At risk', complete: 'Completed', nostart: 'No start date', notyet: 'Not started yet', archived: 'Archived', graduated: '🎓 Graduated', notgrad: 'Not graduated'};
@@ -14,7 +18,7 @@
     already_approved: 'This item is already approved. Ask your leader to reset it if you need to change it.', empty_submission: 'Add a note, a file or a tick before submitting.',
     file_type: 'That file type is not accepted. Use a photo, PDF, audio, video or Office file.', file_size: 'A file is too large. Keep each file under 8 MB.',
     too_many_files: 'Too many files. Up to 5 at a time and 10 per item.', unknown_item: 'This syllabus item no longer exists.', not_found: 'Not found. Refresh and try again.',
-    forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
+    forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', bad_introducer: 'That introducer cannot be chosen (it would loop back to this agent).', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
     invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
   };
@@ -135,7 +139,8 @@
       '<div style="display:grid;gap:8px;margin-top:12px">' +
       '<button class="btn gold" data-c="' + DEMO.LEADER + '">Open as Leader</button>' +
       '<button class="btn ghost" data-c="SAMPLE02">Open as agent Mei Ling (behind)</button>' +
-      '<button class="btn ghost" data-c="SAMPLE01">Open as agent Aiman (on track)</button>' +
+      '<button class="btn ghost" data-c="SAMPLE01">Open as agent Aiman (on track, introduced Daniel)</button>' +
+      '<button class="btn ghost" data-c="SAMPLE09">Open as introducer Sam (senior, introduced Mei Ling)</button>' +
       '<button class="btn ghost" id="reset-demo">Reset sample data</button></div>', function (el, close) {
       el.querySelectorAll('[data-c]').forEach(function (b) { b.onclick = function () { close(); signIn(b.dataset.c, true); }; });
       el.querySelector('#reset-demo').onclick = function () { DEMO.reset(); toast('Sample data reset'); };
@@ -150,24 +155,30 @@
       var r = await api('login');
       st.role = r.role;
       ls('ks_code', st.code); ls('ks_demo', st.demo ? '1' : '0');
-      if (r.role === 'leader') { await loadBoard(); goTeam(); }
-      else { await loadMine(); goAgent(r.agent.id); }
+      if (r.role === 'leader') { st.view = 'team'; await loadBoard(); goTeam(); }
+      else if (r.agent.kind === 'introducer') { st.me = r.agent; st.view = 'team'; await loadTeam(); goTeam(); }
+      else { st.view = 'mine'; await loadMine(); goAgent(r.agent.id); }
     } catch (e) {
       ls('ks_code', null);
       renderLogin(ERR[e.code] || 'Sign-in failed.');
     }
   }
-  function signOut() { ls('ks_code', null); st = {demo: false, code: '', role: '', data: null}; renderLogin(); }
+  function signOut() { ls('ks_code', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; renderLogin(); }
 
   async function loadBoard() { st.data = await api('board'); }
   async function loadMine() {
     var r = await api('mine');
     r.agents = [Object.assign({}, r.agent, {active: true})];
+    st.me = r.agent; st.teamSize = r.teamSize || 0;
     st.data = r;
   }
+  async function loadTeam() { var r = await api('team'); st.me = r.me; st.teamSize = r.agents.length; st.data = r; }
+  // an agent switching between their own board and their recruits
+  async function goMyTeam() { st.view = 'team'; try { await loadTeam(); } catch (e) { showErr(e); st.view = 'mine'; return; } goTeam(); }
+  async function goMine() { st.view = 'mine'; try { await loadMine(); } catch (e) { showErr(e); return; } goAgent(st.me.id); }
   async function refresh() {
     var keepAppts = pendingSaves ? st.data && st.data.appts : null;   // an appointment still saving: keep what is on screen
-    try { if (st.role === 'leader') await loadBoard(); else await loadMine(); }
+    try { if (isGM()) await loadBoard(); else if (st.view === 'team') await loadTeam(); else await loadMine(); }
     catch (e) { showErr(e); }
     if (keepAppts && pendingSaves && st.data) st.data.appts = keepAppts;
     rerender();
@@ -188,21 +199,25 @@
   /* ---------- leader: team ---------- */
   function goTeam() {
     st.screen = 'team';
-    var d = st.data, t = today(), act = agents().filter(function (a) { return a.active && !a.grad; });
-    var gradCount = agents().filter(function (a) { return a.grad === 'yes'; }).length;
-    var sums = {}; agents().forEach(function (a) { sums[a.id] = KS.summary(a, syl(), d.progress, t); });
-    var al = KS.alerts(agents(), syl(), d.progress, t, null, d.appts);
+    var d = st.data, t = today(), trainees = agents().filter(function (a) { return a.kind !== 'introducer'; });
+    var act = trainees.filter(function (a) { return a.active && !a.grad; });
+    var gradCount = trainees.filter(function (a) { return a.grad === 'yes'; }).length;
+    var sums = {}; trainees.forEach(function (a) { sums[a.id] = KS.summary(a, syl(), d.progress, t); });
+    var al = KS.alerts(trainees, syl(), d.progress, t, null, d.appts).filter(function (x) { return isGM() || x.type !== 'graduate'; });
+    var seniors = agents().filter(function (a) { return a.kind === 'introducer'; });
     var avg = act.length ? Math.round(act.reduce(function (s, a) { return s + sums[a.id].pct; }, 0) / act.length) : 0;
     var waiting = act.reduce(function (s, a) { return s + sums[a.id].waiting; }, 0), over = act.reduce(function (s, a) { return s + sums[a.id].overdue; }, 0);
     var shown = st.showAllAlerts ? al : al.slice(0, 8);
 
     var order = {risk: 0, behind: 1, nostart: 2, ontrack: 3, notyet: 4, complete: 5, graduated: 6, notgrad: 7};
-    var list = agents().slice().sort(function (a, b) {
+    var list = trainees.slice().sort(function (a, b) {
       if (a.active !== b.active) return a.active ? -1 : 1;
       return (order[sums[a.id].health] - order[sums[b.id].health]) || a.name.localeCompare(b.name);
     });
 
-    $app.innerHTML = topBar('Team Progress', '90Days Kick Start', '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
+    var backMine = !isGM() && st.me && st.me.kind !== 'introducer';
+    $app.innerHTML = topBar(isGM() ? 'Team Progress' : 'My recruits', isGM() ? '90Days Kick Start' : 'Hi ' + (st.me ? st.me.name : ''), backMine ? '<button class="icon" id="back" aria-label="My 90 Days">←</button>' : '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
+      (backMine ? '<div class="switchbar"><button id="tomine">📘 My 90 Days</button><button class="on">👥 My recruits</button></div>' : '') +
       '<div class="wrap">' +
       '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE · 90Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       '<div class="stats">' +
@@ -214,35 +229,48 @@
       '<div class="section-title">Needs you today <span>' + al.length + '</span></div>' +
       '<div class="alerts">' + (shown.length ? shown.map(alertRow).join('') : '<div class="empty">All clear. Nothing due in the next ' + KS.SOON_DAYS + ' days.</div>') +
         (al.length > 8 && !st.showAllAlerts ? '<div class="alert" id="more"><div class="txt" style="text-align:center;color:var(--blue)">Show all ' + al.length + '</div></div>' : '') + '</div>' +
-      '<div class="section-title">Agents <button class="btn gold small" id="add">+ Add agent</button></div>' +
-      '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">No agents yet. Tap <b>+ Add agent</b> to start someone\'s 90 days.</div>') + '</div>' +
+      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <button class="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
+      '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">' + (isGM()
+        ? 'No agents yet. Tap <b>+ Add agent</b> to start someone\'s 90 days.'
+        : 'No recruits yet. Tap <b>+ Add new agent</b> when someone you introduced joins. You and ' + esc((st.data.settings && st.data.settings.leaderName) || 'your GM') + ' will both follow their 90 days here.') + '</div>') + '</div>' +
+      (isGM() && seniors.length ? '<div class="section-title">Introducer accounts <span>' + seniors.length + '</span></div><div class="panel">' + seniors.map(function (x) {
+        var n = agents().filter(function (y) { return y.introducer === x.id; }).length;
+        return '<div class="check" data-senior="' + esc(x.id) + '" style="cursor:pointer"><span style="flex:1"><b>' + esc(x.name) + '</b>' + (x.active ? '' : ' <span class="chip archived">Archived</span>') + '</span><span class="note">' + n + ' direct recruit' + (n === 1 ? '' : 's') + ' ›</span></div>';
+      }).join('') + '</div>' : '') +
       '</div>';
 
     $app.querySelectorAll('.acard').forEach(function (c) { c.onclick = function () { goAgent(c.dataset.id); }; });
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w, c.dataset.t); }; });
     var more = document.getElementById('more'); if (more) more.onclick = function () { st.showAllAlerts = true; goTeam(); };
     document.getElementById('add').onclick = function () { editAgent(null); };
-    document.getElementById('menu').onclick = leaderMenu;
+    document.getElementById('menu').onclick = isGM() ? leaderMenu : agentMenu;
+    $app.querySelectorAll('[data-senior]').forEach(function (b) { b.onclick = function () { editAgent(b.dataset.senior); }; });
+    var bk = document.getElementById('back'); if (bk) bk.onclick = goMine;
+    var tm = document.getElementById('tomine'); if (tm) tm.onclick = goMine;
   }
 
   var ALERT_TAG = {graduate: 'Graduation', arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
   function alertRow(x) {
-    var mine = st.role !== 'leader', tag = mine && x.type === 'arrange' ? 'Book training' : ALERT_TAG[x.type];
+    var mine = !mgr(), tag = mine && x.type === 'arrange' ? 'Book training' : ALERT_TAG[x.type];
     return '<div class="alert ' + x.type + '" data-a="' + esc(x.agent.id) + '" data-i="' + esc(x.item ? x.item.id : '') + '" data-w="' + (x.wk || '') + '" data-t="' + x.type + '"><span class="dot"></span><div class="txt">' +
       '<div class="tag">' + tag + '</div>' + esc(KS.alertText(x, WEEK_NAMES, mine, st.data.settings && st.data.settings.leaderName)) + '</div></div>';
   }
   function alertClick(aid, iid, wk, type) {
-    if (type === 'graduate') { goAgent(aid); gradSheet(aid); return; }
-    if (st.role === 'leader' && !iid && !wk) { editAgent(aid); return; }
+    if (type === 'graduate') { goAgent(aid); if (isGM()) gradSheet(aid); return; }
+    if (mgr() && !iid && !wk) { editAgent(aid); return; }
     goAgent(aid);
     if (iid) openItem(aid, iid); else if (wk) scrollToWeek(+wk);
   }
+
+  // 'Introduced by …' (the GM sees everyone's introducer; an introducer sees it for their 2nd generation and below)
+  function introName(id) { if (!id) return ''; if (st.me && st.me.id === id) return 'you'; var x = agentById(id); return x ? x.name : ''; }
+  function introLine(a) { var n = introName(a.introducer); return n ? ' · introduced by ' + esc(n) : (isGM() ? ' · added by you' : ''); }
 
   function agentCard(a, s) {
     var health = a.active ? s.health : 'archived', nt = s.nextTraining;
     return '<div class="acard' + (a.active ? '' : ' archived') + '" data-id="' + esc(a.id) + '">' +
       '<div class="row1"><h3>' + esc(a.name) + '</h3><span class="chip ' + health + '">' + HEALTH[health] + '</span></div>' +
-      '<div class="meta">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · ' + wkName(s.week)) : 'Start date missing') + '</div>' +
+      '<div class="meta">' + (s.day ? (s.day < 1 ? 'Starts ' + fmt(a.start) : 'Day ' + Math.min(s.day, 90) + ' of 90 · ' + wkName(s.week)) : 'Start date missing') + introLine(a) + '</div>' +
       '<div class="bar"><i style="width:' + s.pct + '%"></i></div>' +
       '<div class="nums"><span><b>' + s.pct + '%</b> done (' + s.done + '/' + s.required + ')</span><span><b style="color:var(--blue)">' + s.waiting + '</b> to review</span><span><b style="color:var(--red)">' + s.overdue + '</b> overdue</span>' + (s.awards ? '<span>🏆 <b>' + s.awards + '</b></span>' : '') + '</div>' +
       (a.grad ? '<div class="next">' + (a.grad === 'yes' ? '🎓 Graduated on <b>' + fmt(a.gradDate) + '</b>' : 'Not graduated · decided ' + fmt(a.gradDate)) + '</div>' :
@@ -272,22 +300,23 @@
 
   /* ---------- agent board ---------- */
   function goAgent(id, keepScroll) {
-    var a = agentById(id); if (!a) { st.role === 'leader' ? goTeam() : signOut(); return; }
+    var a = agentById(id); if (!a) { mgr() ? goTeam() : signOut(); return; }
     var prevScroll = keepScroll && document.querySelector('.board') ? document.querySelector('.board').scrollLeft : null;
     var prevY = keepScroll ? window.scrollY : 0;
     if (st.agentId !== id) st.tab = 'board';
     st.screen = 'agent'; st.agentId = id;
-    var d = st.data, t = today(), s = KS.summary(a, syl(), d.progress, t), pm = KS.progressMap(d.progress, a.id), leader = st.role === 'leader';
+    var d = st.data, t = today(), s = KS.summary(a, syl(), d.progress, t), pm = KS.progressMap(d.progress, a.id), leader = mgr();
     var C = 2 * Math.PI * 28, nt = s.nextTraining;
     // The leader sees every week (so cards can be added anywhere); an agent sees weeks that have cards.
-    var weeks = leader ? ALL_WEEKS.slice() : [];
-    if (!leader) KS.forAgent(syl(), a).forEach(function (it) { if (weeks.indexOf(it.wk) < 0) weeks.push(it.wk); });
+    var weeks = isGM() ? ALL_WEEKS.slice() : [];
+    if (!isGM()) KS.forAgent(syl(), a).forEach(function (it) { if (weeks.indexOf(it.wk) < 0) weeks.push(it.wk); });
     weeks.sort(function (x, y) { return x - y; });
 
     var myAlerts = leader ? [] : KS.alerts(agents(), syl(), d.progress, t, a.id, d.appts);
     var html = topBar(leader ? a.name : 'My 90 Days', leader ? '90Days Kick Start' : 'Hi ' + a.name,
       leader ? '<button class="icon" id="back" aria-label="Back">←</button>' : '',
       '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
+      (!leader ? '<div class="switchbar"><button class="on">📘 My 90 Days</button><button id="toteam">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button></div>' : '') +
       '<div class="ahead"><div class="inner"><div class="ring"><svg width="66" height="66"><circle cx="33" cy="33" r="28" fill="none" stroke="#2a2b31" stroke-width="7"/>' +
       '<circle cx="33" cy="33" r="28" fill="none" stroke="#E8B04B" stroke-width="7" stroke-linecap="round" stroke-dasharray="' + C + '" stroke-dashoffset="' + (C * (1 - s.pct / 100)) + '"/></svg><b>' + s.pct + '%</b></div>' +
       '<div style="min-width:0"><h2>' + esc(a.name) + ' <span class="chip ' + (a.active ? s.health : 'archived') + '">' + HEALTH[a.active ? s.health : 'archived'] + '</span></h2>' +
@@ -308,7 +337,8 @@
     $app.innerHTML = html;
 
     var back = document.getElementById('back'); if (back) back.onclick = goTeam;
-    document.getElementById('menu').onclick = leader ? leaderMenu : agentMenu;
+    document.getElementById('menu').onclick = isGM() ? leaderMenu : agentMenu;
+    var tt = document.getElementById('toteam'); if (tt) tt.onclick = goMyTeam;
     $app.querySelectorAll('#tabs [data-t]').forEach(function (b) {
       b.onclick = function () { if (b.dataset.t === 'edit') { editAgent(a.id); return; } st.tab = b.dataset.t; goAgent(a.id); };
     });
@@ -355,23 +385,24 @@
       (w !== 13 ? apptButton(a, w) : '') +
       its.map(function (it) { return cardHtml(a, it, pm[it.id], t); }).join('') +
       (!its.length ? '<div class="note" style="padding:6px 4px 10px">No cards in this week yet.</div>' : '') +
-      (st.role === 'leader' ? '<button class="addcard" data-addcard="' + w + '">＋ Add card</button>' : '') + '</div>';
+      (isGM() ? '<button class="addcard" data-addcard="' + w + '">＋ Add card</button>' : '') + '</div>';
   }
 
   /* ---------- graduation: the leader marks Graduated or Not graduated ---------- */
   function gradBar(a, s, leader) {
     if (a.grad === 'yes') return '<div class="gradbar yes"><div class="gb-in"><span class="gb-ico">🎓</span><div><b>' + (leader ? esc(a.name) + ' graduated' : 'Congratulations, you graduated!') + '</b><br>90 Days Kick Start · ' + fmt(a.gradDate) + '</div>' +
-      (leader ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
+      (isGM() ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
     if (a.grad === 'no') return '<div class="gradbar no"><div class="gb-in"><span class="gb-ico">📋</span><div><b>' + (leader ? 'Not graduated' : 'Your 90 Days Kick Start is closed') + '</b><br>' +
-      (leader ? 'Decided ' + fmt(a.gradDate) : 'Talk to your leader about the next steps.') + '</div>' + (leader ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
+      (leader ? 'Decided ' + fmt(a.gradDate) : 'Talk to your leader about the next steps.') + '</div>' + (isGM() ? '<button class="btn ghost small" id="gradbtn">Change</button>' : '') + '</div></div>';
     if (!leader) return '';
+    if (s.decide && !isGM()) return '<div class="gradbar ready"><div class="gb-in"><span class="gb-ico">🎓</span><div><b>' + (s.allDone ? 'All training approved' : 'Day 90 has passed') + '</b><br>Waiting for the GM to decide graduation</div></div></div>';
     if (s.decide) return '<div class="gradbar ready"><div class="gb-in"><span class="gb-ico">🎓</span><div><b>' + (s.allDone ? 'All training approved' : 'Day 90 has passed') + '</b><br>Decide: Graduated or not</div>' +
       '<button class="btn gold small" id="gradbtn">Decide</button></div></div>';
     return '';
   }
 
   function gradSheet(aid) {
-    if (st.role !== 'leader') return;
+    if (!isGM()) return;
     var a = agentById(aid); if (!a) return;
     var s = KS.summary(a, syl(), st.data.progress, today()), left = s.required - s.done;
     sheet('<h3>Graduation · ' + esc(a.name) + '</h3>' +
@@ -416,7 +447,7 @@
   // Link that opens REDEFINE Calendar with a New event filled in; nothing is saved there until the person taps Add.
   function calendarLink(a, w, date, time, note) {
     var topics = KS.forAgent(syl(), a).filter(function (it) { return it.wk === w && it.kind === 'training'; }).map(function (it) { return it.title; });
-    var title = '90 Days Kick Start · ' + wkName(w) + (st.role === 'leader' ? ' · ' + a.name : ' training');
+    var title = '90 Days Kick Start · ' + wkName(w) + (mgr() ? ' · ' + a.name : ' training');
     var notes = (topics.length ? 'Training: ' + topics.join(', ') + '\n' : '') + (note ? note + '\n' : '') +
       'Agent: ' + a.name + '\nOpen 90Days Kick Start: ' + ((st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0]);
     var q = 't=' + encodeURIComponent(title.slice(0, 120)) + '&d=' + encodeURIComponent(date) + (time ? '&s=' + encodeURIComponent(time) : '') + '&n=' + encodeURIComponent(notes.slice(0, 1400));
@@ -427,7 +458,7 @@
     var dflt = ap ? ap.date : (weekDue && weekDue >= today() ? weekDue : today());
     var topics = KS.forAgent(syl(), a).filter(function (it) { return it.wk === w && it.kind === 'training'; }).map(function (it) { return it.title; });
     sheet('<h3>' + esc(wkName(w)) + ' · next appointment</h3>' +
-      '<p class="note">' + (st.role === 'leader' ? 'For ' + esc(a.name) + '. ' : '') + 'You and ' + (st.role === 'leader' ? 'the agent' : 'your leader') + ' both see this on the board.' +
+      '<p class="note">' + (mgr() ? 'For ' + esc(a.name) + '. ' : '') + 'You' + (isGM() ? ', the agent and their introducer' : mgr() ? ', the agent and the GM' : ', your introducer and your GM') + ' both see this on the board.' +
         (topics.length ? ' Training this week: ' + esc(KS.list(topics)) + '.' : '') + '</p>' +
       (ap ? '<p class="note">Set by ' + esc(ap.by || '—') + ' · ' + fmtTime(ap.updated) + '</p>' : '') +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label class="f">Date</label><input type="date" id="ap-date" value="' + esc(dflt) + '"></div>' +
@@ -452,7 +483,7 @@
         function others() { return (st.data.appts || []).filter(function (x) { return !(x.agentId === a.id && +x.wk === w); }); }
         function save(msg) {
           var row = {agentId: a.id, wk: w, date: v('date'), time: v('time'), note: v('note'),
-            by: st.role === 'leader' ? 'Leader' : a.name, updated: new Date().toISOString()};
+            by: isGM() ? 'Leader' : (st.me ? st.me.name : a.name), updated: new Date().toISOString()};
           return instant(function () { st.data.appts = others().concat([row]); },
             'appt', {agentId: a.id, wk: w, date: row.date, time: row.time, note: row.note}, msg);
         }
@@ -480,16 +511,21 @@
       (it.kind !== 'award' && (it.wk === 0 || it.due !== (it.wk === 12 ? 90 : it.wk * 7)) ? '<span>📅 ' + fmt(due) + '</span>' : '') +
       (nChecks ? '<span>☑ ' + done + '/' + nChecks + '</span>' : '') + (files ? '<span>📎 ' + files + '</span>' : '') +
       (p && p.note ? '<span>📝</span>' : '') + (it.links ? '<span>🔗 ' + it.links.length + '</span>' : '') +
-      (it.agentId ? '<span title="Only on this agent\'s board">👤 ' + (st.role === 'leader' ? 'This agent only' : 'Just for you') + '</span>' : '') +
+      (it.agentId ? '<span title="Only on this agent\'s board">👤 ' + (mgr() ? 'This agent only' : 'Just for you') + '</span>' : '') +
       '<span class="chip ' + s + '">' + (s === 'approved' && it.kind === 'award' ? 'Achieved' : STATE[s]) + '</span></div></div>';
   }
 
   function agentMenu() {
     sheet('<h3>Menu</h3><div style="display:grid;gap:8px;margin-top:12px">' +
       '<button class="btn ghost" data-m="refresh">↻ Refresh</button>' +
+      (st.view === 'team' ? (st.me && st.me.kind !== 'introducer' ? '<button class="btn ghost" data-m="mine">📘 My 90 Days</button>' : '') : '<button class="btn ghost" data-m="team">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button>') +
+      (st.view === 'team' ? '<button class="btn ghost" data-m="history">🕘 History of my recruits</button>' : '') +
       '<button class="btn ghost" data-m="install">📲 Add to home screen</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelector('[data-m=refresh]').onclick = function () { close(); refresh(); };
+      var b1 = el.querySelector('[data-m=mine]'); if (b1) b1.onclick = function () { close(); goMine(); };
+      var b2 = el.querySelector('[data-m=team]'); if (b2) b2.onclick = function () { close(); goMyTeam(); };
+      var b3 = el.querySelector('[data-m=history]'); if (b3) b3.onclick = function () { close(); goHistory(); };
       el.querySelector('[data-m=out]').onclick = function () { close(); signOut(); };
       el.querySelector('[data-m=install]').onclick = function () { close(); installHelp(); };
     });
@@ -502,7 +538,7 @@
   function openItem(aid, iid) {
     var a = agentById(aid), it = item(iid); if (!a || !it) { toast(ERR.unknown_item, true); return; }
     var p = KS.progressMap(st.data.progress, aid)[iid] || {status: 'open', checks: [], note: '', comment: '', files: []};
-    var t = today(), s = KS.itemState(a, it, p, t), leader = st.role === 'leader', locked = p.status === 'approved';
+    var t = today(), s = KS.itemState(a, it, p, t), leader = mgr(), locked = p.status === 'approved';
     var canEdit = !leader && !locked && it.kind !== 'award';
     var due = KS.dueDate(a, it);
     var pending = [];   // files picked, not yet uploaded
@@ -524,7 +560,7 @@
       (it.kind !== 'award' ? '<label class="f">Homework files</label><div class="files" id="files">' + fileList(p.files) + '</div>' +
         (canEdit ? '<input type="file" id="pick" multiple accept="image/*,application/pdf,audio/*,video/mp4,video/quicktime,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" class="hidden"><button class="btn ghost small" id="pickbtn">＋ Add photo or file</button> <span class="note">Up to 8 MB each. Photos are shrunk automatically.</span>' : '') : '') +
       '<div class="actions"><div class="btn-row">' + actionButtons(it, p, leader, canEdit) + '</div>' +
-      (leader ? '<button class="btn ghost small" id="editcard" style="margin-top:8px;width:100%">✎ Edit this card (syllabus)</button>' : '') + '</div>';
+      (isGM() ? '<button class="btn ghost small" id="editcard" style="margin-top:8px;width:100%">✎ Edit this card (syllabus)</button>' : '') + '</div>';
 
     sheet(html, function (el, close) {
       var ec = el.querySelector('#editcard'); if (ec) ec.onclick = function () { close(); editCard(it.id, {forAgent: a}); };
@@ -626,7 +662,7 @@
       sheet('<h3 style="word-break:break-all">' + esc(f.name) + '</h3>' +
         (/^image/.test(f.mime) ? '<img class="preview-img" src="' + u + '" alt="">' : /^audio/.test(f.mime) ? '<audio controls src="' + u + '" style="width:100%"></audio>' : /^video/.test(f.mime) ? '<video controls src="' + u + '" style="width:100%"></video>' : '') +
         '<div class="btn-row" style="margin-top:12px"><a class="btn ghost" href="' + u + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">Open / download</a>' +
-        (st.role === 'leader' && (f.url || url) ? '<a class="btn ghost" href="' + esc(f.url || url) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') + '</div>');
+        (isGM() && (f.url || url) ? '<a class="btn ghost" href="' + esc(f.url || url) + '" target="_blank" rel="noopener">Open in Drive</a>' : '') + '</div>');
     } catch (e) { showErr(e); }
   }
 
@@ -640,7 +676,7 @@
     function r(label, v, good, hint) { return '<div class="ratio ' + (v == null ? '' : good(v) ? 'good' : 'low') + '"><b>' + (v == null ? '—' : v + '%') + '</b><span>' + label + '<br>' + hint + '</span></div>'; }
     var s = KS.summary(a, syl(), st.data.progress, today()), cur = s.week || 1;
     return '<div class="wrap">' +
-      (st.role === 'leader' ? '' : '<div class="panel"><b>Log this week</b><div class="note">A = approaches, O = appointments, P = presentations, F = follow-ups, C = closed cases</div>' +
+      (mgr() ? '' : '<div class="panel"><b>Log this week</b><div class="note">A = approaches, O = appointments, P = presentations, F = follow-ups, C = closed cases</div>' +
         '<div>' +
         '<label style="display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin:12px 0 5px">Week</label><select id="aw" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:11px;font-size:16px">' +
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (w) { return '<option value="' + w + '"' + (w === cur ? ' selected' : '') + '>' + wkName(w) + '</option>'; }).join('') + '</select>' +
@@ -671,23 +707,37 @@
   }
 
   /* ---------- leader: agents ---------- */
+  // ids below `rootId` in the team tree (client copy of the server rule, to keep the introducer list loop-free)
+  function downline(rootId) {
+    var out = {}, q = [rootId];
+    while (q.length) { var id = q.shift(); agents().forEach(function (x) { if (x.introducer === id && !out[x.id] && x.id !== rootId) { out[x.id] = 1; q.push(x.id); } }); }
+    return out;
+  }
+
   function editAgent(id) {
     var a = id ? agentById(id) : null, appUrl = (st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0];
-    var html = '<h3>' + (a ? 'Edit ' + esc(a.name) : 'Add a new agent') + '</h3>' +
+    var gm = isGM(), below = a ? downline(a.id) : {};
+    var introOpts = gm ? agents().filter(function (x) { return (!a || (x.id !== a.id && !below[x.id])) && x.active; }) : [];
+    var html = '<h3>' + (a ? 'Edit ' + esc(a.name) : gm ? 'Add an account' : 'Add your new agent') + '</h3>' +
+      (!gm && !a ? '<p class="note">They become your recruit: you and the GM both follow their 90 days.</p>' : '') +
       '<label class="f">Name</label><input type="text" id="e-name" value="' + esc(a ? a.name : '') + '" placeholder="Name as the team calls them">' +
-      '<label class="f">Start date (day 1 of the 90 days)</label><input type="date" id="e-start" value="' + esc(a ? a.start : today()) + '">' +
+      (gm ? '<label class="f">Account type</label><select id="e-kind"><option value="">New agent: does the 90 days</option><option value="introducer"' + (a && a.kind === 'introducer' ? ' selected' : '') + '>Introducer only: senior agent, no training board</option></select>' +
+        '<label class="f">Introduced by</label><select id="e-intro"><option value="">Me (GM) directly</option>' + introOpts.map(function (x) { return '<option value="' + esc(x.id) + '"' + (a && a.introducer === x.id ? ' selected' : '') + '>' + esc(x.name) + (x.kind === 'introducer' ? ' (introducer)' : '') + '</option>'; }).join('') + '</select>' : '') +
+      '<div id="e-startwrap"' + (a && a.kind === 'introducer' ? ' class="hidden"' : '') + '><label class="f">Start date (day 1 of the 90 days)</label><input type="date" id="e-start" value="' + esc(a ? a.start : today()) + '"></div>' +
       '<label class="f">Email (for reminder emails)</label><input type="email" id="e-email" value="' + esc(a ? a.email : '') + '" placeholder="optional">' +
       '<label class="f">Phone (for WhatsApp invite)</label><input type="tel" id="e-phone" value="' + esc(a ? a.phone : '') + '" placeholder="optional, e.g. 60123456789">' +
-      '<label class="f">Leader note (only you see this)</label><input type="text" id="e-note" value="' + esc(a ? a.note : '') + '">' +
+      (gm ? '<label class="f">Leader note (only you see this)</label><input type="text" id="e-note" value="' + esc(a ? a.note : '') + '">' : '') +
       (a ? '<label class="f">Sign-in code</label><div class="codebox">' + esc(a.code) + '</div>' +
         '<div class="btn-row"><button class="btn ghost small" id="e-copy">Copy invite message</button>' + (a.phone ? '<a class="btn ghost small" id="e-wa" target="_blank" rel="noopener">WhatsApp invite</a>' : '') + '<button class="btn ghost small" id="e-newcode">New code</button></div>' : '') +
-      '<div class="actions"><div class="btn-row"><button class="btn gold" id="e-save">' + (a ? 'Save changes' : 'Add agent') + '</button></div>' +
-      (a ? '<button class="btn ghost small" id="e-grad" style="margin-top:8px;width:100%">🎓 Graduation' + (a.grad ? ': ' + (a.grad === 'yes' ? 'Graduated' : 'Not graduated') : '…') + '</button>' : '') +
-      (a ? '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-arch">' + (a.active ? 'Archive (keep records)' : 'Reactivate') + '</button><button class="btn ghost small" id="e-del" style="color:var(--red)">Delete agent…</button></div>' : '') + '</div>';
+      '<div class="actions"><div class="btn-row"><button class="btn gold" id="e-save">' + (a ? 'Save changes' : gm ? 'Add' : 'Add agent') + '</button></div>' +
+      (a && gm && a.kind !== 'introducer' ? '<button class="btn ghost small" id="e-grad" style="margin-top:8px;width:100%">🎓 Graduation' + (a.grad ? ': ' + (a.grad === 'yes' ? 'Graduated' : 'Not graduated') : '…') + '</button>' : '') +
+      (a && gm ? '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-arch">' + (a.active ? 'Archive (keep records)' : 'Reactivate') + '</button><button class="btn ghost small" id="e-del" style="color:var(--red)">Delete agent…</button></div>' : '') + '</div>';
 
     sheet(html, function (el, close) {
-      function v(k) { return el.querySelector('#e-' + k).value.trim(); }
-      function invite(ag) { return 'Hi ' + ag.name + ', welcome to your 90 Days Kick Start! 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app. Your syllabus, homework and progress are all inside.'; }
+      function v(k) { var f = el.querySelector('#e-' + k); return f ? f.value.trim() : ''; }
+      var ek = el.querySelector('#e-kind'); if (ek) ek.onchange = function () { el.querySelector('#e-startwrap').classList.toggle('hidden', ek.value === 'introducer'); };
+      function invite(ag) { if (ag.kind === 'introducer') return 'Hi ' + ag.name + ', here is your 90Days Kick Start login. Add the new agents you introduce and follow their 90 days with me. 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app.';
+        return 'Hi ' + ag.name + ', welcome to your 90 Days Kick Start! 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app. Your syllabus, homework and progress are all inside.'; }
       if (a) {
         el.querySelector('#e-copy').onclick = function () { copy(invite(a)); };
         var wa = el.querySelector('#e-wa'); if (wa) wa.href = 'https://wa.me/' + a.phone.replace(/\D/g, '') + '?text=' + encodeURIComponent(invite(a));
@@ -695,22 +745,23 @@
           if (!(await confirmBox('Give ' + a.name + ' a new code?', 'The old code stops working straight away. You will need to send them the new one.', 'Make new code', true))) return;
           try { await api('updateAgent', {id: a.id, newCode: true}); close(); await refresh(); editAgent(a.id); toast('New code made'); } catch (e) { showErr(e); }
         };
-        el.querySelector('#e-grad').onclick = function () { close(); gradSheet(a.id); };
-        el.querySelector('#e-arch').onclick = async function () {
+        var eg = el.querySelector('#e-grad'); if (eg) eg.onclick = function () { close(); gradSheet(a.id); };
+        if (gm) el.querySelector('#e-arch').onclick = async function () {
           var on = !a.active;
           if (!(await confirmBox(on ? 'Reactivate ' + a.name + '?' : 'Archive ' + a.name + '?', on ? 'They can sign in again and get reminders.' : 'They can no longer sign in and get no reminders. All records and files are kept, and you can reactivate later.', on ? 'Reactivate' : 'Archive', !on))) return;
           try { await api('updateAgent', {id: a.id, active: on}); close(); toast(on ? 'Reactivated' : 'Archived'); refresh(); } catch (e) { showErr(e); }
         };
-        el.querySelector('#e-del').onclick = async function () {
+        if (gm) el.querySelector('#e-del').onclick = async function () {
           var typed = await confirmBox('Delete ' + a.name + '?', 'This removes their progress, activity and homework records from the app, and moves their uploaded files to Google Drive trash (recoverable for 30 days). <b>Archive</b> is usually better.', 'Delete for good', true, a.name);
           if (!typed) return;
           try { await api('deleteAgent', {id: a.id, confirmName: typed}); close(); toast('Deleted'); await refresh(); goTeam(); } catch (e) { showErr(e); }
         };
       }
       el.querySelector('#e-save').onclick = async function () {
-        var q = {name: v('name'), start: v('start'), email: v('email'), phone: v('phone'), note: v('note')};
+        var q = {name: v('name'), start: v('start'), email: v('email'), phone: v('phone')};
+        if (gm) { q.note = v('note'); q.kind = v('kind'); q.introducer = v('intro'); }
         if (!q.name) { toast('Name is required.', true); return; }
-        if (!q.start && !(await confirmBox('No start date?', 'Without a start date the app cannot set due dates or send reminders for this agent. You can add it later.', 'Save without date'))) return;
+        if (q.kind !== 'introducer' && !q.start && !(await confirmBox('No start date?', 'Without a start date the app cannot set due dates or send reminders for this agent. You can add it later.', 'Save without date'))) return;
         if (a && a.start && q.start !== a.start && !(await confirmBox('Change start date?', 'All due dates for ' + esc(a.name) + ' move from day 1 = <b>' + fmt(a.start) + '</b> to <b>' + fmt(q.start) + '</b>. Use this if training was delayed.', 'Change dates'))) return;
         try {
           if (a) { await api('updateAgent', Object.assign({id: a.id}, q)); close(); toast('Saved'); refresh(); }
@@ -782,7 +833,7 @@
   function closeAllSheets() { document.querySelectorAll('.scrim').forEach(function (s) { s.remove(); }); document.body.style.overflow = ''; }
 
   function syllabusEditor() {
-    if (st.role !== 'leader') return;
+    if (!isGM()) return;
     var names = {}; agents().forEach(function (a) { names[a.id] = a.name; });
     var removed = (st.data && st.data.removedItems) || [];
     var kTag = function (it) { return '<span class="k ' + it.kind + '" style="font:700 9.5px var(--font);text-transform:uppercase;padding:2px 6px;border-radius:6px;flex:none">' + KIND[it.kind] + '</span>'; };
@@ -811,7 +862,7 @@
 
   // id = card to edit, or null to add one. opts: wk (new card's week), forAgent (agent whose board we came from), back (return to the syllabus list)
   function editCard(id, opts) {
-    if (st.role !== 'leader') return;
+    if (!isGM()) return;
     opts = opts || {};
     var it = id ? item(id) : null;
     if (id && !it) { toast(ERR.unknown_item, true); return; }

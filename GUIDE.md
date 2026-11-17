@@ -37,6 +37,20 @@
 - **History** shows the last 60 actions: who submitted, approved or changed what.
 - **Edit syllabus** lists every card by week. Tap a card to edit it, tap **＋ Add** to add one, and restore removed cards at the bottom.
 
+## Who can do what
+| | You (GM) | Introducer (any agent) | New agent |
+|---|---|---|---|
+| See | Everyone | Their own downline (recruits, and their recruits) | Their own board |
+| Add agents | Anyone, any account type, pick the introducer | Their own new recruits | Their own new recruits (they become an introducer) |
+| Approve or send back homework, set appointments, edit contact details | Everyone | Their downline | Their own appointments |
+| Edit the syllabus, graduate, archive or delete, settings and emails | Yes | No | No |
+
+**Introducer accounts:** senior agents who are not in training. Add them with **+ Add agent → Account type: Introducer only**. They sign in straight to **My recruits** and have no training board.
+
+**New agents who recruit:** they tap **👥 My recruits** at the top of their own board to add and follow their recruits. **📘 My 90 Days** takes them back.
+
+**Moving an agent:** in **Edit agent → Introduced by**, pick a different introducer. The app refuses a choice that would loop back to the same agent. If you delete an agent, their recruits move up to that agent's introducer.
+
 ## For the new agent
 
 1. Open the link and enter your code. Then **add the app to your home screen**: on iPhone tap Share, then Add to Home Screen; on Android tap ⋮, then Install app.

@@ -215,8 +215,8 @@ ok('leader and agent can set the next appointment for each week; alerts show it 
   const bk = al.find(x => x.type === 'booked');
   assert.equal(KS.alertText(bk, WEEK_NAMES), 'Appt Tester: Week 1 training tomorrow, 5 Nov, 8pm (SG FARLIM)');
   assert.equal(KS.alertText(bk, WEEK_NAMES, true), 'Your Week 1 training is tomorrow: 5 Nov, 8pm (SG FARLIM)');
-  // an agent cannot book for someone else: the agentId is ignored, it is always their own
-  call({op: 'appt', code: a.code, agentId: b.id, wk: 2, date: '2026-11-10'});
+  // an agent cannot book for someone outside their downline
+  err({op: 'appt', code: a.code, agentId: b.id, wk: 2, date: '2026-11-10'}, 'forbidden');
   assert.equal(call({op: 'mine', code: b.code}).appts.length, 0);
   // leader changes it (one per week, replaced) and can clear it
   call({op: 'appt', code: L, agentId: a.id, wk: 1, date: '2026-11-06', time: '', note: ''});
@@ -257,6 +257,61 @@ ok('leader marks Graduated or Not graduated; agents cannot; reminders stop', () 
   const b = call({op: 'board', code: L}), ha = b.agents.find(x => x.id === h.id), hs = KS.summary(ha, b.syllabus, b.progress, '2026-11-04');
   assert.equal(hs.allDone, true); assert.equal(hs.decide, true);
   assert.ok(KS.alerts(b.agents, b.syllabus, b.progress, '2026-11-04', null, b.appts).some(x => x.type === 'graduate' && x.agent.id === h.id && /finished all training/.test(KS.alertText(x, WEEK_NAMES))));
+});
+
+ok('introducers add and monitor their own downline only; the GM sees everything', () => {
+  // GM makes a senior introducer account (no training board) and a separate team
+  const sen = call({op: 'addAgent', code: L, name: 'Senior Sam', kind: 'introducer'}).agent;
+  const other = call({op: 'addAgent', code: L, name: 'Outside Olivia', start: '2026-11-01'}).agent;
+  assert.equal(sen.kind, 'introducer');
+  err({op: 'mine', code: sen.code}, 'forbidden');                                  // no training board
+  // the senior adds a new agent: always into their own team, as a trainee
+  const n1 = call({op: 'addAgent', code: sen.code, name: 'New Nora', start: '2026-11-01', kind: 'introducer', introducer: other.id, note: 'x'}).agent;
+  assert.equal(n1.introducer, sen.id); assert.equal(n1.kind, ''); assert.equal(n1.note, undefined);
+  // the trainee recruits too: 2nd generation
+  const n2 = call({op: 'addAgent', code: n1.code, name: 'Second Gen Gary', start: '2026-11-03'}).agent;
+  assert.equal(n2.introducer, n1.id);
+  // what each can see
+  const tSen = call({op: 'team', code: sen.code});
+  assert.deepEqual(tSen.agents.map(a => a.name).sort(), ['New Nora', 'Second Gen Gary']);
+  assert.ok(tSen.agents.every(a => a.note === undefined && a.gradNote === undefined));
+  assert.deepEqual(call({op: 'team', code: n1.code}).agents.map(a => a.name), ['Second Gen Gary']);
+  assert.equal(call({op: 'team', code: n2.code}).agents.length, 0);
+  assert.equal(call({op: 'mine', code: n1.code}).teamSize, 1);
+  assert.ok(call({op: 'board', code: L}).agents.some(a => a.name === 'Second Gen Gary'));   // GM sees all
+  // monitor + approve inside the downline, refused outside it
+  call({op: 'submit', code: n2.code, itemId: 'w1f', note: 'done', files: [{name: 'p.jpg', mime: 'image/jpeg', b64: 'SGk='}]});
+  const fid = db.progress.find(p => p.agentId === n2.id && p.itemId === 'w1f').files[0].id;
+  assert.equal(call({op: 'file', code: sen.code, id: fid}).b64, 'SGk=');           // grand-recruit's homework
+  err({op: 'file', code: other.code, id: fid}, 'not_found');
+  call({op: 'review', code: sen.code, agentId: n2.id, itemId: 'w1f', decision: 'approve'});
+  assert.ok(db.log.some(l => l.by === 'Senior Sam' && l.action === 'approved'));
+  err({op: 'review', code: n1.code, agentId: other.id, itemId: 'w1f', decision: 'approve'}, 'forbidden');
+  err({op: 'review', code: n2.code, agentId: n2.id, itemId: 'w1f', decision: 'approve'}, 'forbidden');   // not your own homework
+  call({op: 'appt', code: sen.code, agentId: n1.id, wk: 1, date: '2026-11-06', time: '20:00'});
+  err({op: 'appt', code: n1.code, agentId: sen.id, wk: 1, date: '2026-11-06'}, 'forbidden');            // upline is not downline
+  call({op: 'updateAgent', code: sen.code, id: n2.id, phone: '60123456789', note: 'sneaky', active: false, introducer: '', kind: 'introducer'});
+  const g = db.agents.find(a => a.id === n2.id);
+  assert.equal(g.phone, '60123456789'); assert.equal(g.note, ''); assert.notEqual(g.active, false); assert.equal(g.introducer, n1.id); assert.equal(g.kind, '');
+  err({op: 'updateAgent', code: n1.code, id: other.id, phone: '1'}, 'forbidden');
+  // GM-only actions stay GM-only
+  err({op: 'graduate', code: sen.code, id: n1.id, result: 'yes'}, 'forbidden');
+  err({op: 'deleteAgent', code: sen.code, id: n1.id, confirmName: 'New Nora'}, 'forbidden');
+  err({op: 'saveItem', code: sen.code, item: {title: 'X', kind: 'homework', wk: 1}}, 'forbidden');
+  err({op: 'board', code: sen.code}, 'forbidden');
+  // GM can move an agent to another introducer, but not into a loop
+  err({op: 'updateAgent', code: L, id: n1.id, introducer: n2.id}, 'bad_introducer');
+  call({op: 'updateAgent', code: L, id: n2.id, introducer: other.id});
+  assert.equal(call({op: 'team', code: sen.code}).agents.length, 1);
+  call({op: 'updateAgent', code: L, id: n2.id, introducer: n1.id});
+  // reminder email for the introducer covers their recruits; introducer accounts get no "own steps"
+  call({op: 'updateAgent', code: L, id: sen.id, email: 'sam@example.com'});
+  const em = call({op: 'previewReminders', code: L}).emails.find(m => m.to === 'sam@example.com');
+  assert.ok(em && /Your recruits:/.test(em.body) && /New Nora/.test(em.body));
+  // deleting a middle agent moves their recruits up, nobody is lost
+  call({op: 'deleteAgent', code: L, id: n1.id, confirmName: 'New Nora'});
+  assert.equal(db.agents.find(a => a.id === n2.id).introducer, sen.id);
+  assert.deepEqual(call({op: 'team', code: sen.code}).agents.map(a => a.name), ['Second Gen Gary']);
 });
 
 ok('locks out after 20 wrong codes', () => {
