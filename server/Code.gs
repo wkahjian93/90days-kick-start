@@ -338,6 +338,9 @@ var CORE = (function () {
     store.save('log', rows);
   }
 
+  // The GM's own account (set by the GM): signs in with name + 6-digit PIN and gets the full GM view.
+  function ownerId(store) { return str(settingsObj(store).ownerId); }
+
   function who(q, store) {
     var code = str(q.code, 60);
     if (store.fails(0) >= 20) fail('locked');
@@ -345,6 +348,7 @@ var CORE = (function () {
     if (leader.length >= 10 && code === leader) return {role: 'leader'};
     if (/^[A-Z0-9]{8}$/i.test(code)) {
       var a = store.load('agents').filter(function (x) { return x.code === code.toUpperCase() && x.active !== false && x.active !== 'false'; })[0];
+      if (a && a.id === ownerId(store)) return {role: 'leader', owner: a};   // the owner's own account is the GM login
       if (a) return {role: 'agent', agent: a};
     }
     store.fails(1);
@@ -391,15 +395,16 @@ var CORE = (function () {
     if (store.fails(0) >= 20) fail('locked');
     var a = byName(store.load('agents').map(cleanAgent), q.name);
     if (!a || !a.active || !a.pin || !/^\d{4,6}$/.test(String(q.pin || '')) || a.pin !== pinHash(store, a.id, String(q.pin))) { store.fails(1); fail('bad_pin'); }
+    if (a.id === ownerId(store)) return {ok: true, code: a.code, role: 'leader'};
     return {ok: true, code: a.code, role: 'agent', agent: publicAgent(a)};
   }
 
-  // Names for "Who introduced you?" (only after the right team code).
+  // Names for "Who introduced you?" (only after the right team code). The owner is the "GM directly" choice, not listed twice.
   function joinInfo(q, store) {
     if (store.fails(0) >= 20) fail('locked');
     checkTeam(store, q.team);
     return {ok: true, leaderName: settingsObj(store).leaderName || 'GM',
-      people: store.load('agents').map(cleanAgent).filter(function (a) { return a.active; }).map(function (a) { return {id: a.id, name: a.name}; })
+      people: store.load('agents').map(cleanAgent).filter(function (a) { return a.active && a.id !== ownerId(store); }).map(function (a) { return {id: a.id, name: a.name}; })
         .sort(function (x, y) { return x.name.localeCompare(y.name); })};
   }
 
@@ -413,6 +418,7 @@ var CORE = (function () {
       agentFields({name: q.name, email: q.email, phone: q.phone, start: a.kind ? '' : (q.start || today(store))}, a, true);
       if (byName(rows, a.name)) fail('name_taken');
       var intro = str(q.introducer, 20);
+      if (intro === ownerId(store)) intro = '';   // picking the owner = GM directly
       if (intro) { if (!rows.some(function (x) { return x.id === intro && x.active; })) fail('bad_introducer'); a.introducer = intro; }
       do { a.code = newId(store, 8); } while (rows.some(function (x) { return x.code === a.code; }));
       a.pin = pinHash(store, a.id, String(q.pin));
@@ -556,6 +562,7 @@ var CORE = (function () {
       case 'file': return getFile(q, store, null);
       case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
       case 'graduate': return graduate(q, store);
+      case 'setOwner': return setOwner(q, store);
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
       case 'restoreItem': return removeItem(q, store, false);
@@ -592,9 +599,10 @@ var CORE = (function () {
   }
 
   // The GM may set who introduced an agent; an introducer that would create a loop is refused.
-  function setIntroducer(rows, a, id) {
+  function setIntroducer(rows, a, id, owner) {
     id = str(id, 20);
-    if (!id) { a.introducer = ''; return; }
+    if (!id || id === owner) { a.introducer = ''; return; }   // the owner = GM directly
+    if (a.id === owner) fail('bad_introducer');
     if (id === a.id || !rows.some(function (x) { return x.id === id; })) fail('bad_introducer');
     if (downlineIds(rows.map(cleanAgent), a.id)[id]) fail('bad_introducer');
     a.introducer = id;
@@ -605,7 +613,7 @@ var CORE = (function () {
     agentFields(q, a, by);
     if (rows.some(function (x) { return x.name.toLowerCase() === a.name.toLowerCase(); })) fail('duplicate_name');
     if (by) a.introducer = by.id;                       // an introducer always adds into their own team, as a new agent
-    else { setIntroducer(rows, a, q.introducer); a.kind = q.kind === 'introducer' ? 'introducer' : ''; }
+    else { setIntroducer(rows, a, q.introducer, ownerId(store)); a.kind = q.kind === 'introducer' ? 'introducer' : ''; }
     do { a.code = newId(store, 8); } while (rows.some(function (x) { return x.code === a.code; }));
     rows.push(a);
     store.save('agents', rows);
@@ -620,10 +628,11 @@ var CORE = (function () {
   function updateAgent(q, store, by) {
     var rows = store.load('agents').map(cleanAgent), a = findAgent(rows, str(q.id, 20)), before = a.start, beforeIntro = a.introducer;
     agentFields(q, a, by);
+    if (!by && a.id === ownerId(store) && (q.active === false || (q.kind != null && q.kind !== 'introducer') || q.resetPin === true)) fail('is_owner');
     if (!by) {   // GM only: archive, account type, introducer
       if (q.active != null) a.active = q.active === true;
       if (q.kind != null) a.kind = q.kind === 'introducer' ? 'introducer' : '';
-      if (q.introducer != null) setIntroducer(rows, a, q.introducer);
+      if (q.introducer != null) setIntroducer(rows, a, q.introducer, ownerId(store));
     }
     if (q.newCode === true) { do { a.code = newId(store, 8); } while (rows.some(function (x) { return x !== a && x.code === a.code; })); }
     if (q.resetPin === true) a.pin = '';   // they sign in with their code once, then choose a new PIN
@@ -647,6 +656,7 @@ var CORE = (function () {
   function deleteAgent(q, store) {
     var rows = store.load('agents'), a = findAgent(rows, str(q.id, 20));
     if (str(q.confirmName) !== a.name) fail('confirm_name');
+    if (a.id === ownerId(store)) fail('is_owner');   // stop using it as the GM login first
     var prog = store.load('progress');
     prog.filter(function (p) { return p.agentId === a.id; }).forEach(function (p) { (p.files || []).forEach(function (f) { try { store.trashFile(f.id); } catch (e) {} }); });
     store.save('progress', prog.filter(function (p) { return p.agentId !== a.id; }));
@@ -688,6 +698,23 @@ var CORE = (function () {
     store.save('settings', rows);
     log(store, 'Leader', 'changed settings', '', '', Object.keys(allowed).filter(function (k) { return q[k] != null; }).join(', '));
     return {ok: true, settings: settingsObj(store)};
+  }
+
+  /* ---------- the GM's own name + PIN login (GM only) ---------- */
+  // id: the GM's own account, pin: a new 6-digit PIN; id '' stops using any account as the GM login.
+  function setOwner(q, store) {
+    var id = str(q.id, 20), rows = store.load('agents').map(cleanAgent), sets = store.load('settings');
+    var put = function (v) { var r = sets.filter(function (x) { return x.key === 'ownerId'; })[0]; if (r) r.value = v; else sets.push({key: 'ownerId', value: v}); store.save('settings', sets); };
+    if (!id) { put(''); log(store, 'Leader', 'stopped GM name + PIN login', '', '', ''); return {ok: true}; }
+    var a = findAgent(rows, id);
+    if (!/^\d{6}$/.test(String(q.pin || ''))) fail('pin_owner');
+    a.kind = 'introducer'; a.introducer = ''; a.active = true; a.start = '';
+    a.pin = pinHash(store, a.id, String(q.pin));
+    rows.forEach(function (x) { if (x.introducer === a.id) x.introducer = ''; });   // their recruits are now "GM directly"
+    store.save('agents', rows);
+    put(a.id);
+    log(store, 'Leader', 'set GM name + PIN login', a.id, '', a.name);
+    return {ok: true};
   }
 
   /* ---------- graduation (leader only) ---------- */

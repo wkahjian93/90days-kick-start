@@ -20,7 +20,8 @@
     too_many_files: 'Too many files. Up to 5 at a time and 10 per item.', unknown_item: 'This syllabus item no longer exists.', not_found: 'Not found. Refresh and try again.',
     bad_pin: 'Name or PIN is not right. Check the spelling of your name, or ask your introducer to reset your PIN.',
     bad_team: 'That team code is not right. Ask your GM or introducer.', signup_closed: 'Self sign-up is off. Ask your GM for a sign-in code.',
-    pin_format: 'PIN must be 4 to 6 digits.', name_taken: 'That name already has an account. Sign in instead, or add your surname.',
+    pin_format: 'PIN must be 4 to 6 digits.', pin_owner: 'Your GM PIN must be exactly 6 digits.',
+    is_owner: 'This is your GM login. Tap "Stop using as GM login" first.', name_taken: 'That name already has an account. Sign in instead, or add your surname.',
     team_code_short: 'Team code needs at least 6 letters or numbers, no spaces.',
     forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', bad_introducer: 'That introducer cannot be chosen (it would loop back to this agent).', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
@@ -325,6 +326,7 @@
         : 'No recruits yet. Tap <b>+ Add new agent</b> when someone you introduced joins. You and ' + esc((st.data.settings && st.data.settings.leaderName) || 'your GM') + ' will both follow their 90 days here.') + '</div>') + '</div>' +
       (isGM() && seniors.length ? '<div class="section-title">Introducer accounts <span>' + seniors.length + '</span></div><div class="panel">' + seniors.map(function (x) {
         var n = agents().filter(function (y) { return y.introducer === x.id; }).length;
+        if (x.id === ownerIdC()) return '<div class="check" data-senior="' + esc(x.id) + '" style="cursor:pointer"><span style="flex:1"><b>⭐ ' + esc(x.name) + '</b> <span class="note">your GM login (name + PIN)</span></span><span class="note">›</span></div>';
         return '<div class="check" data-senior="' + esc(x.id) + '" style="cursor:pointer"><span style="flex:1"><b>' + esc(x.name) + '</b>' + (x.active ? '' : ' <span class="chip archived">Archived</span>') + '</span><span class="note">' + n + ' direct recruit' + (n === 1 ? '' : 's') + ' ›</span></div>';
       }).join('') + '</div>' : '') +
       '</div>';
@@ -625,6 +627,24 @@
       el.querySelector('[data-m=install]').onclick = function () { close(); installHelp(); };
     });
   }
+  /* the GM's own account becomes the GM login (name + 6-digit PIN) */
+  function ownerIdC() { return (st.data && st.data.settings && st.data.settings.ownerId) || ''; }
+  function ownerSheet(a, changing) {
+    sheet('<h3>' + (changing ? 'Change my GM PIN' : 'Use ' + esc(a.name) + ' as my GM login') + '</h3>' +
+      (changing ? '' : '<p class="note">After this, signing in with the name <b>' + esc(a.name) + '</b> and a 6-digit PIN opens the <b>full GM view</b>, the same as your leader code. Agents who chose this name as their introducer count as "GM directly". Only do this if this account is you.</p>') +
+      '<label class="f">New 6-digit PIN (only you know it)</label><input type="password" id="o1" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<label class="f">Type it again</label><input type="password" id="o2" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<div class="actions"><button class="btn gold" id="osave" style="width:100%">' + (changing ? 'Save new PIN' : '⭐ Make this my GM login') + '</button></div>', function (el, close) {
+      el.querySelector('#osave').onclick = async function () {
+        var p1 = el.querySelector('#o1').value.trim(), p2 = el.querySelector('#o2').value.trim();
+        if (!/^\d{6}$/.test(p1)) { toast(ERR.pin_owner, true); return; }
+        if (p1 !== p2) { toast('The two PINs are different.', true); return; }
+        if (!changing && !(await confirmBox('Make ' + a.name + ' your GM login?', 'Whoever signs in with this name and PIN can see and change everything. Keep the PIN private.', 'Yes, this is me'))) return;
+        try { await api('setOwner', {id: a.id, pin: p1}); close(); toast(changing ? 'GM PIN changed' : '⭐ Done. Sign in with ' + a.name + ' + your PIN from now on.'); refresh(); } catch (e) { showErr(e); }
+      };
+    });
+  }
+
   // an agent chooses their PIN, so next time they sign in with name + PIN
   function pinSheet() {
     sheet('<h3>' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</h3>' +
@@ -845,7 +865,8 @@
   function editAgent(id) {
     var a = id ? agentById(id) : null, appUrl = (st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0];
     var gm = isGM(), below = a ? downline(a.id) : {};
-    var introOpts = gm ? agents().filter(function (x) { return (!a || (x.id !== a.id && !below[x.id])) && x.active; }) : [];
+    var isOwner = gm && a && a.id === ownerIdC();
+    var introOpts = gm ? agents().filter(function (x) { return (!a || (x.id !== a.id && !below[x.id])) && x.active && x.id !== ownerIdC(); }) : [];
     var html = '<h3>' + (a ? 'Edit ' + esc(a.name) : gm ? 'Add an account' : 'Add your new agent') + '</h3>' +
       (!gm && !a ? '<p class="note">They become your recruit: you and the GM both follow their 90 days.</p>' : '') +
       '<label class="f">Name</label><input type="text" id="e-name" value="' + esc(a ? a.name : '') + '" placeholder="Name as the team calls them">' +
@@ -855,13 +876,17 @@
       '<label class="f">Email (for reminder emails)</label><input type="email" id="e-email" value="' + esc(a ? a.email : '') + '" placeholder="optional">' +
       '<label class="f">Phone (for WhatsApp invite)</label><input type="tel" id="e-phone" value="' + esc(a ? a.phone : '') + '" placeholder="optional, e.g. 60123456789">' +
       (gm ? '<label class="f">Leader note (only you see this)</label><input type="text" id="e-note" value="' + esc(a ? a.note : '') + '">' : '') +
-      (a ? '<label class="f">Sign-in</label><div class="note" style="margin-bottom:6px">' + (a.hasPin ? '✅ Signs in with name + PIN.' : '⚠️ No PIN yet: signs in with this code, then sets a PIN in ☰ menu.') +
+      (isOwner ? '<div class="panel" style="margin-top:12px;background:var(--amber-bg)"><b>⭐ This is your GM login.</b><div class="note">Sign in with the name <b>' + esc(a.name) + '</b> and your 6-digit PIN to get the full GM view. Your leader code also still works.</div>' +
+          '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-ownerpin">Change my GM PIN</button><button class="btn ghost small" id="e-unowner">Stop using as GM login</button></div></div>' :
+       a ? '<label class="f">Sign-in</label><div class="note" style="margin-bottom:6px">' + (a.hasPin ? '✅ Signs in with name + PIN.' : '⚠️ No PIN yet: signs in with this code, then sets a PIN in ☰ menu.') +
           (a.hasPin ? ' <button class="btn ghost small" id="e-resetpin">Reset PIN</button>' : '') + '</div>' +
-        '<label class="f">Sign-in code (works any time)</label><div class="codebox">' + esc(a.code) + '</div>' +
+          (gm ? '<button class="btn ghost small" id="e-makeowner" style="margin-bottom:8px">⭐ This is me: use as my GM login</button>' : '') : '') +
+
+      (a && !isOwner ? '<label class="f">Sign-in code (works any time)</label><div class="codebox">' + esc(a.code) + '</div>' +
         '<div class="btn-row"><button class="btn ghost small" id="e-copy">Copy invite message</button>' + (a.phone ? '<a class="btn ghost small" id="e-wa" target="_blank" rel="noopener">WhatsApp invite</a>' : '') + '<button class="btn ghost small" id="e-newcode">New code</button></div>' : '') +
       '<div class="actions"><div class="btn-row"><button class="btn gold" id="e-save">' + (a ? 'Save changes' : gm ? 'Add' : 'Add agent') + '</button></div>' +
       (a && gm && a.kind !== 'introducer' ? '<button class="btn ghost small" id="e-grad" style="margin-top:8px;width:100%">🎓 Graduation' + (a.grad ? ': ' + (a.grad === 'yes' ? 'Graduated' : 'Not graduated') : '…') + '</button>' : '') +
-      (a && gm ? '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-arch">' + (a.active ? 'Archive (keep records)' : 'Reactivate') + '</button><button class="btn ghost small" id="e-del" style="color:var(--red)">Delete agent…</button></div>' : '') + '</div>';
+      (a && gm && !isOwner ? '<div class="btn-row" style="margin-top:8px"><button class="btn ghost small" id="e-arch">' + (a.active ? 'Archive (keep records)' : 'Reactivate') + '</button><button class="btn ghost small" id="e-del" style="color:var(--red)">Delete agent…</button></div>' : '') + '</div>';
 
     sheet(html, function (el, close) {
       function v(k) { var f = el.querySelector('#e-' + k); return f ? f.value.trim() : ''; }
@@ -869,11 +894,18 @@
       function invite(ag) { if (ag.kind === 'introducer') return 'Hi ' + ag.name + ', here is your 90Days Kick Start login. Add the new agents you introduce and follow their 90 days with me. 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app.';
         return 'Hi ' + ag.name + ', welcome to your 90 Days Kick Start! 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app. Your syllabus, homework and progress are all inside.'; }
       if (a) {
-        el.querySelector('#e-copy').onclick = function () { copy(invite(a)); };
+        if (el.querySelector('#e-copy')) el.querySelector('#e-copy').onclick = function () { copy(invite(a)); };
         var wa = el.querySelector('#e-wa'); if (wa) wa.href = 'https://wa.me/' + a.phone.replace(/\D/g, '') + '?text=' + encodeURIComponent(invite(a));
-        el.querySelector('#e-newcode').onclick = async function () {
+        if (el.querySelector('#e-newcode')) el.querySelector('#e-newcode').onclick = async function () {
           if (!(await confirmBox('Give ' + a.name + ' a new code?', 'The old code stops working straight away. You will need to send them the new one.', 'Make new code', true))) return;
           try { await api('updateAgent', {id: a.id, newCode: true}); close(); await refresh(); editAgent(a.id); toast('New code made'); } catch (e) { showErr(e); }
+        };
+        var mo = el.querySelector('#e-makeowner'); if (mo) mo.onclick = function () { close(); ownerSheet(a, false); };
+        var op = el.querySelector('#e-ownerpin'); if (op) op.onclick = function () { close(); ownerSheet(a, true); };
+        var uo = el.querySelector('#e-unowner');
+        if (uo) uo.onclick = async function () {
+          if (!(await confirmBox('Stop using ' + a.name + ' as your GM login?', 'Signing in with this name + PIN will then open a normal introducer account. Your leader code still gives the full GM view.', 'Stop using', true))) return;
+          try { await api('setOwner', {id: ''}); close(); toast('Done. Use your leader code to sign in as GM.'); refresh(); } catch (e) { showErr(e); }
         };
         var rp = el.querySelector('#e-resetpin');
         if (rp) rp.onclick = async function () {
@@ -881,12 +913,12 @@
           try { await api('updateAgent', {id: a.id, resetPin: true}); close(); await refresh(); editAgent(a.id); toast('PIN reset. Send them their code.'); } catch (e) { showErr(e); }
         };
         var eg = el.querySelector('#e-grad'); if (eg) eg.onclick = function () { close(); gradSheet(a.id); };
-        if (gm) el.querySelector('#e-arch').onclick = async function () {
+        if (el.querySelector('#e-arch')) el.querySelector('#e-arch').onclick = async function () {
           var on = !a.active;
           if (!(await confirmBox(on ? 'Reactivate ' + a.name + '?' : 'Archive ' + a.name + '?', on ? 'They can sign in again and get reminders.' : 'They can no longer sign in and get no reminders. All records and files are kept, and you can reactivate later.', on ? 'Reactivate' : 'Archive', !on))) return;
           try { await api('updateAgent', {id: a.id, active: on}); close(); toast(on ? 'Reactivated' : 'Archived'); refresh(); } catch (e) { showErr(e); }
         };
-        if (gm) el.querySelector('#e-del').onclick = async function () {
+        if (el.querySelector('#e-del')) el.querySelector('#e-del').onclick = async function () {
           var typed = await confirmBox('Delete ' + a.name + '?', 'This removes their progress, activity and homework records from the app, and moves their uploaded files to Google Drive trash (recoverable for 30 days). <b>Archive</b> is usually better.', 'Delete for good', true, a.name);
           if (!typed) return;
           try { await api('deleteAgent', {id: a.id, confirmName: typed}); close(); toast('Deleted'); await refresh(); goTeam(); } catch (e) { showErr(e); }

@@ -357,6 +357,40 @@ ok('agents sign themselves up with the team code, then sign in with name + PIN',
   assert.ok(db.log.some(l => l.action === 'signed up' && l.by === 'Pin Pat'));
 });
 
+ok('the owner account signs in with name + 6-digit PIN as GM; picking the owner = GM directly', () => {
+  failsN = 0;
+  call({op: 'settings', code: L, teamCode: 'Redefine2026'});
+  const me = call({op: 'signup', team: 'Redefine2026', name: 'Owner Olivia', pin: '1357', kind: 'introducer'}).agent;
+  assert.equal(call({op: 'signin', name: 'Owner Olivia', pin: '1357'}).role, 'agent');
+  const helper = call({op: 'signup', team: 'Redefine2026', name: 'Helper Hana', pin: '2468', introducer: me.id}).agent;
+  assert.equal(helper.introducer, me.id);
+  // only the GM can make an account the GM login, and the PIN must be 6 digits
+  err({op: 'setOwner', code: call({op: 'signin', name: 'Helper Hana', pin: '2468'}).code, id: helper.id, pin: '123456'}, 'forbidden');
+  err({op: 'setOwner', code: L, id: me.id, pin: '1357'}, 'pin_owner');
+  call({op: 'setOwner', code: L, id: me.id, pin: '864209'});
+  // the old 4-digit PIN no longer works; name + new PIN gives the full GM view
+  err({op: 'signin', name: 'Owner Olivia', pin: '1357'}, 'bad_pin');
+  const s = call({op: 'signin', name: 'owner olivia', pin: '864209'});
+  assert.equal(s.role, 'leader');
+  assert.equal(call({op: 'login', code: s.code}).role, 'leader');
+  assert.ok(call({op: 'board', code: s.code}).agents.length > 3);
+  call({op: 'saveItem', code: s.code, item: {title: 'Owner test card', kind: 'task', wk: 1}});   // GM powers
+  // recruits who picked the owner now count as GM directly; new sign-ups too; the owner is not listed twice
+  assert.equal(db.agents.find(a => a.id === helper.id).introducer, '');
+  assert.ok(!call({op: 'joinInfo', team: 'Redefine2026'}).people.some(p => p.id === me.id));
+  const later = call({op: 'signup', team: 'Redefine2026', name: 'Later Lin', pin: '9999', introducer: me.id}).agent;
+  assert.equal(later.introducer, '');
+  // the owner account cannot be deleted, archived or PIN-reset by mistake
+  err({op: 'deleteAgent', code: L, id: me.id, confirmName: 'Owner Olivia'}, 'is_owner');
+  err({op: 'updateAgent', code: L, id: me.id, active: false}, 'is_owner');
+  err({op: 'updateAgent', code: L, id: me.id, resetPin: true}, 'is_owner');
+  // stop using it: back to a normal introducer account
+  call({op: 'setOwner', code: L, id: ''});
+  assert.equal(call({op: 'signin', name: 'Owner Olivia', pin: '864209'}).role, 'agent');
+  call({op: 'settings', code: L, teamCode: ''});
+  failsN = 0;
+});
+
 ok('locks out after 20 wrong codes', () => {
   failsN = 20; err({op: 'login', code: L}, 'locked'); failsN = 0;
 });

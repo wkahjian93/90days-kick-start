@@ -42,7 +42,7 @@
 2. **Each agent, once:** open the app → **New here? Create my account** → team code → their name, a 4–6 digit PIN, "New agent" or "Senior agent", start date, and **who introduced them**. They are live straight away and appear in their introducer's **My recruits** and on your Team Progress.
 3. **Every time after:** sign in with **name + PIN**. The phone remembers them, so usually they don't even need that.
 4. **Forgot PIN:** you or their introducer open them → **Edit agent → Reset PIN**. They sign in once with their code (shown there), then **☰ → Set my PIN**.
-5. **You (GM):** tap **Sign in with a code instead** and use your leader code.
+5. **You (GM):** sign in with **your own name + 6-digit PIN** once your account is set as your GM login (**Edit agent → ⭐ This is me: use as my GM login**). Your leader code still works too, via **Sign in with a code instead**.
 
 Agents in **My recruits** see a **Copy join message** button with the link, team code and steps, ready to paste into WhatsApp.
 
