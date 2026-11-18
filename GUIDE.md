@@ -37,6 +37,15 @@
 - **History** shows the last 60 actions: who submitted, approved or changed what.
 - **Edit syllabus** lists every card by week. Tap a card to edit it, tap **＋ Add** to add one, and restore removed cards at the bottom.
 
+## Signing in (easiest way)
+1. **You, once:** ☰ → **Settings → Team code for self sign-up** (e.g. Redefine2026). Share it in your team WhatsApp group. Leave it empty to turn self sign-up off, and change it if it leaks.
+2. **Each agent, once:** open the app → **New here? Create my account** → team code → their name, a 4–6 digit PIN, "New agent" or "Senior agent", start date, and **who introduced them**. They are live straight away and appear in their introducer's **My recruits** and on your Team Progress.
+3. **Every time after:** sign in with **name + PIN**. The phone remembers them, so usually they don't even need that.
+4. **Forgot PIN:** you or their introducer open them → **Edit agent → Reset PIN**. They sign in once with their code (shown there), then **☰ → Set my PIN**.
+5. **You (GM):** tap **Sign in with a code instead** and use your leader code.
+
+Agents in **My recruits** see a **Copy join message** button with the link, team code and steps, ready to paste into WhatsApp.
+
 ## Who can do what
 | | You (GM) | Introducer (any agent) | New agent |
 |---|---|---|---|

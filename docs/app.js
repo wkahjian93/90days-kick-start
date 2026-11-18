@@ -18,6 +18,10 @@
     already_approved: 'This item is already approved. Ask your leader to reset it if you need to change it.', empty_submission: 'Add a note, a file or a tick before submitting.',
     file_type: 'That file type is not accepted. Use a photo, PDF, audio, video or Office file.', file_size: 'A file is too large. Keep each file under 8 MB.',
     too_many_files: 'Too many files. Up to 5 at a time and 10 per item.', unknown_item: 'This syllabus item no longer exists.', not_found: 'Not found. Refresh and try again.',
+    bad_pin: 'Name or PIN is not right. Check the spelling of your name, or ask your introducer to reset your PIN.',
+    bad_team: 'That team code is not right. Ask your GM or introducer.', signup_closed: 'Self sign-up is off. Ask your GM for a sign-in code.',
+    pin_format: 'PIN must be 4 to 6 digits.', name_taken: 'That name already has an account. Sign in instead, or add your surname.',
+    team_code_short: 'Team code needs at least 6 letters or numbers, no spaces.',
     forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', bad_introducer: 'That introducer cannot be chosen (it would loop back to this agent).', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
     invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
@@ -112,37 +116,122 @@
   }
 
   /* ---------- sign in ---------- */
-  function renderLogin(msg) {
-    st.screen = 'login';
-    $app.innerHTML = '<div class="login"><div class="box">' +
+  /* ---------- sign in: name + PIN for agents, a code for the GM (or an agent without a PIN) ---------- */
+  function loginShell(inner) {
+    return '<div class="login"><div class="box">' +
       '<img class="brandlogo" src="logo.png" alt="REDEFINE">' +
-      '<div class="mark">90</div><h2>Days Kick Start</h2>' +
-      '<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
-      (API ? '<input id="code" placeholder="Leader code or agent code" autocomplete="off" autocapitalize="characters" spellcheck="false">' +
-        '<div class="err" id="err">' + esc(msg || '') + '</div>' +
-        '<button class="btn gold" id="go">Sign in</button>' +
-        '<button class="btn ghost" id="demo">Try the sample (made-up agents)</button>'
-      : '<button class="btn gold" id="demo">Open the sample (no code needed)</button>' +
-        '<div class="fine">This is a preview with made-up agents. Real sign-in codes start working once the team server is connected.</div>') +
-      '<div class="fine">Agents: your leader gives you a personal 8-letter code. Leaders: use your leader code.</div>' +
-      '</div></div>';
-    var inp = document.getElementById('code');
-    if (inp) {
-      document.getElementById('go').onclick = function () { signIn(inp.value.trim(), false); };
-      inp.onkeydown = function (e) { if (e.key === 'Enter') signIn(inp.value.trim(), false); };
+      '<div class="mark">90</div><h2>Days Kick Start</h2>' + inner + '</div></div>';
+  }
+
+  function renderLogin(msg, mode) {
+    st.screen = 'login';
+    if (!API && !st.demo) {
+      $app.innerHTML = loginShell('<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
+        '<button class="btn gold" id="demo">Open the sample (no code needed)</button>' +
+        '<div class="fine">This is a preview with made-up agents. Real accounts start working once the team server is connected.</div>');
+      document.getElementById('demo').onclick = chooseDemoRole;
+      return;
     }
-    document.getElementById('demo').onclick = function () { chooseDemoRole(); };
+    var codeMode = mode === 'code';
+    $app.innerHTML = loginShell(
+      '<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
+      (codeMode
+        ? '<input id="code" placeholder="Leader code or 8-letter agent code" autocomplete="off" autocapitalize="characters" spellcheck="false">'
+        : '<input id="lname" placeholder="Your name" autocomplete="username" autocapitalize="words">' +
+          '<input id="lpin" placeholder="PIN (4–6 digits)" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password">') +
+      '<div class="err" id="err">' + esc(msg || '') + '</div>' +
+      '<button class="btn gold" id="go">Sign in</button>' +
+      (codeMode ? '' : '<button class="btn ghost" id="join">New here? Create my account</button>') +
+      '<div class="fine" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+        '<a href="#" id="swap">' + (codeMode ? '← Sign in with name + PIN' : 'Sign in with a code instead (GM, or no PIN yet)') + '</a>' +
+        '<a href="#" id="demo">Try the sample</a></div>' +
+      (codeMode ? '' : '<div class="fine">Forgot your PIN? Ask your introducer or GM to reset it.</div>') +
+      (st.demo ? '<div class="fine"><b>Sample mode:</b> team code DEMO2026, sample PINs are 1234.</div>' : ''));
+    var go = document.getElementById('go');
+    if (codeMode) {
+      var inp = document.getElementById('code');
+      go.onclick = function () { signIn(inp.value.trim(), st.demo); };
+      inp.onkeydown = function (e) { if (e.key === 'Enter') go.onclick(); };
+    } else {
+      var nm = document.getElementById('lname'), pn = document.getElementById('lpin');
+      go.onclick = function () { pinSignIn(nm.value.trim(), pn.value.trim()); };
+      pn.onkeydown = function (e) { if (e.key === 'Enter') go.onclick(); };
+      document.getElementById('join').onclick = function () { renderJoin(); };
+    }
+    document.getElementById('swap').onclick = function (e) { e.preventDefault(); renderLogin('', codeMode ? '' : 'code'); };
+    document.getElementById('demo').onclick = function (e) { e.preventDefault(); chooseDemoRole(); };
+  }
+
+  async function pinSignIn(name, pin) {
+    if (!name || !pin) { renderLogin('Enter your name and PIN.'); return; }
+    try {
+      st.code = '';
+      var r = await api('signin', {name: name, pin: pin});
+      signIn(r.code, st.demo);
+    } catch (e) { renderLogin(ERR[e.code] || 'Sign-in failed.'); }
+  }
+
+  /* create my own account: team code first, then my details */
+  function renderJoin(msg) {
+    st.screen = 'login';
+    $app.innerHTML = loginShell(
+      '<p><b>Create your account.</b> Ask your GM or introducer for the team code.</p>' +
+      '<input id="jteam" placeholder="Team code" autocomplete="off" autocapitalize="none" spellcheck="false">' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div>' +
+      '<button class="btn gold" id="next">Next</button>' +
+      '<div class="fine"><a href="#" id="back">← Back to sign in</a></div>' +
+      (st.demo ? '<div class="fine"><b>Sample mode:</b> the team code is DEMO2026.</div>' : ''));
+    var t = document.getElementById('jteam');
+    document.getElementById('next').onclick = async function () {
+      st.code = '';
+      try { var info = await api('joinInfo', {team: t.value.trim()}); renderJoinForm(t.value.trim(), info); }
+      catch (e) { renderJoin(ERR[e.code] || 'Could not check the team code.'); }
+    };
+    t.onkeydown = function (e) { if (e.key === 'Enter') document.getElementById('next').onclick(); };
+    document.getElementById('back').onclick = function (e) { e.preventDefault(); renderLogin(); };
+  }
+
+  function renderJoinForm(team, info, msg, keep) {
+    keep = keep || {};
+    var opts = info.people.map(function (p) { return '<option value="' + esc(p.id) + '"' + (keep.introducer === p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('');
+    $app.innerHTML = loginShell(
+      '<p><b>Your details</b></p>' +
+      '<label class="lf">Full name (as the team calls you)</label><input id="jname" value="' + esc(keep.name || '') + '" autocapitalize="words" maxlength="60">' +
+      '<label class="lf">Choose a PIN (4–6 digits)</label><input id="jpin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" value="' + esc(keep.pin || '') + '">' +
+      '<label class="lf">I am</label><select id="jkind"><option value="">A new agent: start my 90 Days Kick Start</option><option value="introducer"' + (keep.kind === 'introducer' ? ' selected' : '') + '>A senior agent: I only follow my recruits</option></select>' +
+      '<div id="jstartwrap"' + (keep.kind === 'introducer' ? ' class="hidden"' : '') + '><label class="lf">My start date (day 1)</label><input id="jstart" type="date" value="' + esc(keep.start || KS.todayMYT()) + '"></div>' +
+      '<label class="lf">Who introduced me?</label><select id="jintro"><option value="">' + esc(info.leaderName || 'GM') + ' (GM) directly</option>' + opts + '</select>' +
+      '<label class="lf">Phone (optional, for WhatsApp)</label><input id="jphone" type="tel" value="' + esc(keep.phone || '') + '" placeholder="e.g. 60123456789">' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div>' +
+      '<button class="btn gold" id="create">Create my account</button>' +
+      '<div class="fine"><a href="#" id="back">← Back</a></div>');
+    var v = function (k) { return document.getElementById('j' + k).value.trim(); };
+    document.getElementById('jkind').onchange = function () { document.getElementById('jstartwrap').classList.toggle('hidden', v('kind') === 'introducer'); };
+    document.getElementById('back').onclick = function (e) { e.preventDefault(); renderJoin(); };
+    document.getElementById('create').onclick = async function () {
+      var q = {team: team, name: v('name'), pin: v('pin'), kind: v('kind'), start: v('start'), introducer: v('intro'), phone: v('phone')};
+      if (!q.name) { renderJoinForm(team, info, 'Enter your name.', q); return; }
+      if (!/^\d{4,6}$/.test(q.pin)) { renderJoinForm(team, info, ERR.pin_format, q); return; }
+      try {
+        st.code = '';
+        var r = await api('signup', q);
+        toast('Welcome, ' + r.agent.name + '! Next time sign in with your name and PIN.');
+        signIn(r.code, st.demo);
+      } catch (e) { renderJoinForm(team, info, ERR[e.code] || 'Could not create the account.', q); }
+    };
   }
 
   function chooseDemoRole() {
-    sheet('<h3>Try the sample</h3><p class="note">Real syllabus from your Trello board, three made-up agents. Everything stays on this phone.</p>' +
+    sheet('<h3>Try the sample</h3><p class="note">Real syllabus from your Trello board, made-up agents. Everything stays on this phone.</p>' +
       '<div style="display:grid;gap:8px;margin-top:12px">' +
-      '<button class="btn gold" data-c="' + DEMO.LEADER + '">Open as Leader</button>' +
+      '<button class="btn gold" data-c="' + DEMO.LEADER + '">Open as GM (leader)</button>' +
       '<button class="btn ghost" data-c="SAMPLE02">Open as agent Mei Ling (behind)</button>' +
       '<button class="btn ghost" data-c="SAMPLE01">Open as agent Aiman (on track, introduced Daniel)</button>' +
       '<button class="btn ghost" data-c="SAMPLE09">Open as introducer Sam (senior, introduced Mei Ling)</button>' +
+      '<button class="btn ghost" id="demo-join">Try creating an account / name + PIN sign-in</button>' +
       '<button class="btn ghost" id="reset-demo">Reset sample data</button></div>', function (el, close) {
       el.querySelectorAll('[data-c]').forEach(function (b) { b.onclick = function () { close(); signIn(b.dataset.c, true); }; });
+      el.querySelector('#demo-join').onclick = function () { close(); st.demo = true; renderLogin(); };
       el.querySelector('#reset-demo').onclick = function () { DEMO.reset(); toast('Sample data reset'); };
     });
   }
@@ -160,7 +249,7 @@
       else { st.view = 'mine'; await loadMine(); goAgent(r.agent.id); }
     } catch (e) {
       ls('ks_code', null);
-      renderLogin(ERR[e.code] || 'Sign-in failed.');
+      renderLogin(ERR[e.code] || 'Sign-in failed.', 'code');
     }
   }
   function signOut() { ls('ks_code', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; renderLogin(); }
@@ -218,7 +307,7 @@
     var backMine = !isGM() && st.me && st.me.kind !== 'introducer';
     $app.innerHTML = topBar(isGM() ? 'Team Progress' : 'My recruits', isGM() ? '90Days Kick Start' : 'Hi ' + (st.me ? st.me.name : ''), backMine ? '<button class="icon" id="back" aria-label="My 90 Days">←</button>' : '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       (backMine ? '<div class="switchbar"><button id="tomine">📘 My 90 Days</button><button class="on">👥 My recruits</button></div>' : '') +
-      '<div class="wrap">' +
+      '<div class="wrap">' + pinNudge() +
       '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE · 90Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       '<div class="stats">' +
         '<div class="stat"><b>' + act.length + '</b><span>In training' + (gradCount ? ' · 🎓 ' + gradCount + ' graduated' : '') + '</span></div>' +
@@ -229,7 +318,8 @@
       '<div class="section-title">Needs you today <span>' + al.length + '</span></div>' +
       '<div class="alerts">' + (shown.length ? shown.map(alertRow).join('') : '<div class="empty">All clear. Nothing due in the next ' + KS.SOON_DAYS + ' days.</div>') +
         (al.length > 8 && !st.showAllAlerts ? '<div class="alert" id="more"><div class="txt" style="text-align:center;color:var(--blue)">Show all ' + al.length + '</div></div>' : '') + '</div>' +
-      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <button class="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
+      '<div style="margin-top:18px">' + joinBox() + '</div>' +
+      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <buttonclass="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
       '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">' + (isGM()
         ? 'No agents yet. Tap <b>+ Add agent</b> to start someone\'s 90 days.'
         : 'No recruits yet. Tap <b>+ Add new agent</b> when someone you introduced joins. You and ' + esc((st.data.settings && st.data.settings.leaderName) || 'your GM') + ' will both follow their 90 days here.') + '</div>') + '</div>' +
@@ -247,6 +337,7 @@
     $app.querySelectorAll('[data-senior]').forEach(function (b) { b.onclick = function () { editAgent(b.dataset.senior); }; });
     var bk = document.getElementById('back'); if (bk) bk.onclick = goMine;
     var tm = document.getElementById('tomine'); if (tm) tm.onclick = goMine;
+    bindPinAndJoin();
   }
 
   var ALERT_TAG = {graduate: 'Graduation', arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
@@ -317,6 +408,7 @@
       leader ? '<button class="icon" id="back" aria-label="Back">←</button>' : '',
       '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       (!leader ? '<div class="switchbar"><button class="on">📘 My 90 Days</button><button id="toteam">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button></div>' : '') +
+      (!leader && pinNudge() ? '<div style="padding:10px 16px 0">' + pinNudge() + '</div>' : '') +
       '<div class="ahead"><div class="inner"><div class="ring"><svg width="66" height="66"><circle cx="33" cy="33" r="28" fill="none" stroke="#2a2b31" stroke-width="7"/>' +
       '<circle cx="33" cy="33" r="28" fill="none" stroke="#E8B04B" stroke-width="7" stroke-linecap="round" stroke-dasharray="' + C + '" stroke-dashoffset="' + (C * (1 - s.pct / 100)) + '"/></svg><b>' + s.pct + '%</b></div>' +
       '<div style="min-width:0"><h2>' + esc(a.name) + ' <span class="chip ' + (a.active ? s.health : 'archived') + '">' + HEALTH[a.active ? s.health : 'archived'] + '</span></h2>' +
@@ -339,6 +431,7 @@
     var back = document.getElementById('back'); if (back) back.onclick = goTeam;
     document.getElementById('menu').onclick = isGM() ? leaderMenu : agentMenu;
     var tt = document.getElementById('toteam'); if (tt) tt.onclick = goMyTeam;
+    bindPinAndJoin();
     $app.querySelectorAll('#tabs [data-t]').forEach(function (b) {
       b.onclick = function () { if (b.dataset.t === 'edit') { editAgent(a.id); return; } st.tab = b.dataset.t; goAgent(a.id); };
     });
@@ -520,9 +613,11 @@
       '<button class="btn ghost" data-m="refresh">↻ Refresh</button>' +
       (st.view === 'team' ? (st.me && st.me.kind !== 'introducer' ? '<button class="btn ghost" data-m="mine">📘 My 90 Days</button>' : '') : '<button class="btn ghost" data-m="team">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button>') +
       (st.view === 'team' ? '<button class="btn ghost" data-m="history">🕘 History of my recruits</button>' : '') +
+      '<button class="btn ghost" data-m="pin">🔑 ' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</button>' +
       '<button class="btn ghost" data-m="install">📲 Add to home screen</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelector('[data-m=refresh]').onclick = function () { close(); refresh(); };
+      el.querySelector('[data-m=pin]').onclick = function () { close(); pinSheet(); };
       var b1 = el.querySelector('[data-m=mine]'); if (b1) b1.onclick = function () { close(); goMine(); };
       var b2 = el.querySelector('[data-m=team]'); if (b2) b2.onclick = function () { close(); goMyTeam(); };
       var b3 = el.querySelector('[data-m=history]'); if (b3) b3.onclick = function () { close(); goHistory(); };
@@ -530,6 +625,39 @@
       el.querySelector('[data-m=install]').onclick = function () { close(); installHelp(); };
     });
   }
+  // an agent chooses their PIN, so next time they sign in with name + PIN
+  function pinSheet() {
+    sheet('<h3>' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</h3>' +
+      '<p class="note">Next time, sign in with your name <b>' + esc(st.me ? st.me.name : '') + '</b> and this PIN.</p>' +
+      '<label class="f">New PIN (4–6 digits)</label><input type="password" id="p1" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<label class="f">Type it again</label><input type="password" id="p2" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<div class="actions"><button class="btn gold" id="psave" style="width:100%">Save PIN</button></div>', function (el, close) {
+      el.querySelector('#psave').onclick = async function () {
+        var a = el.querySelector('#p1').value.trim(), b = el.querySelector('#p2').value.trim();
+        if (!/^\d{4,6}$/.test(a)) { toast(ERR.pin_format, true); return; }
+        if (a !== b) { toast('The two PINs are different.', true); return; }
+        try { await api('setPin', {pin: a}); if (st.me) st.me.hasPin = true; close(); toast('PIN saved. Next time sign in with your name + PIN.'); rerender(); } catch (e) { showErr(e); }
+      };
+    });
+  }
+  function bindPinAndJoin() {
+    var sp = document.getElementById('setpin'); if (sp) sp.onclick = pinSheet;
+    var cj = document.getElementById('copyjoin'); if (cj) cj.onclick = function () { copy(cj.dataset.msg); };
+  }
+  // small reminder for agents who signed in with a code and have no PIN yet
+  function pinNudge() {
+    return st.me && !st.me.hasPin && !isGM() ? '<div class="pinnudge"><span>🔑 Set a PIN so you can sign in with your name next time.</span><button class="btn gold small" id="setpin">Set PIN</button></div>' : '';
+  }
+  // team code box: lets an introducer (or the GM) get new agents to sign themselves up
+  function joinBox() {
+    var code = st.data && st.data.settings && st.data.settings.teamCode, url = (st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0];
+    if (!code) return isGM() ? '<div class="panel note" style="margin-bottom:10px">💡 Let agents create their own account: set a <b>team code</b> in ☰ → Settings.</div>' : '';
+    var who = isGM() ? '' : (st.me ? st.me.name : '');
+    var msg = 'Join REDEFINE 90 Days Kick Start 🎯\n\n1. Open ' + url + '\n2. Tap "New here? Create my account"\n3. Team code: ' + code + '\n4. Choose your name, a PIN' + (who ? ', and "' + who + '" as the person who introduced you' : '') + '.';
+    return '<div class="panel joinbox" style="margin-bottom:10px"><div><b>New agents can join by themselves</b><div class="note">Team code <b>' + esc(code) + '</b>. They pick ' + (who ? 'you' : 'their introducer') + ' when signing up.</div></div>' +
+      '<button class="btn ghost small" id="copyjoin" data-msg="' + esc(msg) + '">Copy join message</button></div>';
+  }
+
   function installHelp() {
     sheet('<h3>Add to home screen</h3><p><b>iPhone (Safari):</b> tap the Share button, then <b>Add to Home Screen</b>.</p><p><b>Android (Chrome):</b> tap ⋮, then <b>Add to Home screen</b> or <b>Install app</b>.</p><p class="note">The app then opens full screen like a normal app and remembers your code.</p>');
   }
@@ -727,7 +855,9 @@
       '<label class="f">Email (for reminder emails)</label><input type="email" id="e-email" value="' + esc(a ? a.email : '') + '" placeholder="optional">' +
       '<label class="f">Phone (for WhatsApp invite)</label><input type="tel" id="e-phone" value="' + esc(a ? a.phone : '') + '" placeholder="optional, e.g. 60123456789">' +
       (gm ? '<label class="f">Leader note (only you see this)</label><input type="text" id="e-note" value="' + esc(a ? a.note : '') + '">' : '') +
-      (a ? '<label class="f">Sign-in code</label><div class="codebox">' + esc(a.code) + '</div>' +
+      (a ? '<label class="f">Sign-in</label><div class="note" style="margin-bottom:6px">' + (a.hasPin ? '✅ Signs in with name + PIN.' : '⚠️ No PIN yet: signs in with this code, then sets a PIN in ☰ menu.') +
+          (a.hasPin ? ' <button class="btn ghost small" id="e-resetpin">Reset PIN</button>' : '') + '</div>' +
+        '<label class="f">Sign-in code (works any time)</label><div class="codebox">' + esc(a.code) + '</div>' +
         '<div class="btn-row"><button class="btn ghost small" id="e-copy">Copy invite message</button>' + (a.phone ? '<a class="btn ghost small" id="e-wa" target="_blank" rel="noopener">WhatsApp invite</a>' : '') + '<button class="btn ghost small" id="e-newcode">New code</button></div>' : '') +
       '<div class="actions"><div class="btn-row"><button class="btn gold" id="e-save">' + (a ? 'Save changes' : gm ? 'Add' : 'Add agent') + '</button></div>' +
       (a && gm && a.kind !== 'introducer' ? '<button class="btn ghost small" id="e-grad" style="margin-top:8px;width:100%">🎓 Graduation' + (a.grad ? ': ' + (a.grad === 'yes' ? 'Graduated' : 'Not graduated') : '…') + '</button>' : '') +
@@ -744,6 +874,11 @@
         el.querySelector('#e-newcode').onclick = async function () {
           if (!(await confirmBox('Give ' + a.name + ' a new code?', 'The old code stops working straight away. You will need to send them the new one.', 'Make new code', true))) return;
           try { await api('updateAgent', {id: a.id, newCode: true}); close(); await refresh(); editAgent(a.id); toast('New code made'); } catch (e) { showErr(e); }
+        };
+        var rp = el.querySelector('#e-resetpin');
+        if (rp) rp.onclick = async function () {
+          if (!(await confirmBox('Reset ' + a.name + '\'s PIN?', 'Their PIN stops working. They sign in once with their code (shown here, or send the invite again), then choose a new PIN from the ☰ menu.', 'Reset PIN', true))) return;
+          try { await api('updateAgent', {id: a.id, resetPin: true}); close(); await refresh(); editAgent(a.id); toast('PIN reset. Send them their code.'); } catch (e) { showErr(e); }
         };
         var eg = el.querySelector('#e-grad'); if (eg) eg.onclick = function () { close(); gradSheet(a.id); };
         if (gm) el.querySelector('#e-arch').onclick = async function () {
@@ -806,12 +941,14 @@
       '<label class="f">Your name (shown to agents)</label><input type="text" id="s-name" value="' + esc(s.leaderName || '') + '">' +
       '<label class="f">Your email (for the daily leader digest)</label><input type="email" id="s-email" value="' + esc(s.leaderEmail || '') + '">' +
       '<label class="f">App link (used in invites and emails)</label><input type="text" id="s-url" value="' + esc(s.appUrl || location.href.split('?')[0].split('#')[0]) + '">' +
+      '<label class="f">Team code for self sign-up</label><input type="text" id="s-team" value="' + esc(s.teamCode || '') + '" autocapitalize="none" spellcheck="false" placeholder="e.g. Redefine2026 (6+ letters/numbers)">' +
+      '<div class="note">Agents use it once to create their own account (name + PIN). Share it in your team WhatsApp group. Leave empty to turn self sign-up off; change it if it leaks.</div>' +
       '<div class="switch"><div><b>Daily 8am email reminders</b><div class="note">One digest to you, and one to each agent who has something due, overdue or to redo.</div></div><input type="checkbox" id="s-alerts" style="width:24px;height:24px"' + (s.emailAlerts === 'on' ? ' checked' : '') + '></div>' +
       '<div class="actions"><button class="btn gold" id="s-save" style="width:100%">Save settings</button></div>', function (el, close) {
       el.querySelector('#s-save').onclick = async function () {
         var on = el.querySelector('#s-alerts').checked ? 'on' : 'off';
         if (on === 'on' && s.emailAlerts !== 'on' && !(await confirmBox('Turn on daily emails?', 'Every morning at 8am the app will email you and each agent who has something due. You can preview them any time under Email reminders.', 'Turn on'))) return;
-        try { await api('settings', {leaderName: el.querySelector('#s-name').value, leaderEmail: el.querySelector('#s-email').value, appUrl: el.querySelector('#s-url').value, emailAlerts: on}); close(); toast('Settings saved'); refresh(); }
+        try { await api('settings', {leaderName: el.querySelector('#s-name').value, leaderEmail: el.querySelector('#s-email').value, appUrl: el.querySelector('#s-url').value, teamCode: el.querySelector('#s-team').value.trim(), emailAlerts: on}); close(); toast('Settings saved'); refresh(); }
         catch (e) { showErr(e); }
       };
     });

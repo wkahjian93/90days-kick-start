@@ -1,7 +1,7 @@
 /* Sample mode: the real server rules (core.js) running on this phone's storage, with three made-up agents.
    Nothing leaves the phone and no email is sent; "sent" emails go to a sample outbox. */
 var DEMO = (function () {
-  var KEY = 'ks_demo_v2', LEADER = 'demo-leader';
+  var KEY = 'ks_demo_v3', LEADER = 'demo-leader';
   var db;
 
   function persist() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* storage full or blocked: keep in memory */ } }
@@ -9,7 +9,7 @@ var DEMO = (function () {
   function seed() {
     var t = KS.todayMYT(), at = new Date().toISOString();
     db = {agents: [], progress: [], activity: [], settings: [
-      {key: 'leaderName', value: 'Leader (sample)'}, {key: 'leaderEmail', value: 'leader@example.com'}, {key: 'emailAlerts', value: 'off'}
+      {key: 'leaderName', value: 'Leader (sample)'}, {key: 'leaderEmail', value: 'leader@example.com'}, {key: 'emailAlerts', value: 'off'}, {key: 'teamCode', value: 'DEMO2026'}
     ], log: [], files: {}, outbox: []};
     function agent(id, name, code, daysAgo, email, introducer, kind) {
       db.agents.push({id: id, name: name, email: email, phone: '', start: daysAgo == null ? '' : KS.addDays(t, -daysAgo), code: code, active: true, created: at, note: 'Sample agent', introducer: introducer || '', kind: kind || ''});
@@ -41,6 +41,7 @@ var DEMO = (function () {
     });
     db.activity.push({agentId: 'ASAMP02', wk: 1, a: 12, o: 3, p: 1, f: 0, c: 0, anp: 0, updated: at});
     db.activity.push({agentId: 'ASAMP02', wk: 2, a: 8, o: 2, p: 1, f: 1, c: 0, anp: 0, updated: at});
+    db.agents.forEach(function (a) { a.pin = store.hash('ks-pin|' + a.id + '|1234'); });   // every sample PIN is 1234
     db.log.push({at: at, by: 'Sample', action: 'created sample data', agentId: '', itemId: '', detail: '3 made-up agents'});
     persist();
   }
@@ -58,6 +59,8 @@ var DEMO = (function () {
     fails: function () { return 0; },
     now: function () { return new Date(); },
     random: Math.random,
+    // sample mode only: a simple stand-in for the server's SHA-256
+    hash: function (s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return 'demo' + h.toString(16); },
     putFile: function (agent, name, mime, b64) {
       var id = 'f' + Date.now() + Math.floor(Math.random() * 1e6);
       db.files[id] = {name: name, mime: mime, b64: b64}; persist();

@@ -7,7 +7,8 @@ var CORE = (function () {
     // grad: '' (not decided) | 'yes' (Graduated) | 'no' (Not graduated); set only by the leader
     // introducer: id of the account that brought this agent in ('' = the GM directly)
     // kind: '' = new agent doing the 90 days | 'introducer' = senior account, no training board
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind'],
+    // pin: salted hash of the agent's 4-6 digit PIN ('' = no PIN yet); the PIN itself is never stored
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind', 'pin'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -103,11 +104,63 @@ var CORE = (function () {
     return a;
   }
   // What an introducer may see about a downline agent: no GM notes.
-  function teamAgent(a) { var o = Object.assign({}, a); delete o.note; delete o.gradNote; return o; }
+  function teamAgent(a) { var o = Object.assign({}, a); delete o.note; delete o.gradNote; o.hasPin = !!o.pin; delete o.pin; return o; }
+  function noPin(a) { var o = Object.assign({}, a); o.hasPin = !!o.pin; delete o.pin; return o; }
+
+  /* ---------- self sign-up and name + PIN sign-in ---------- */
+  function pinHash(store, agentId, pin) { return store.hash('ks-pin|' + agentId + '|' + pin); }
+  function checkPin(pin) { if (!/^\d{4,6}$/.test(String(pin || ''))) fail('pin_format'); }
+  // The team code the GM set in Settings; without it nobody can sign themselves up.
+  function checkTeam(store, team) {
+    var code = str(settingsObj(store).teamCode);
+    if (!code) fail('signup_closed');
+    if (str(team, 60).toLowerCase() !== code.toLowerCase()) { store.fails(1); fail('bad_team'); }
+  }
+  function byName(rows, name) { name = str(name, 60).toLowerCase(); return rows.filter(function (x) { return x.name.toLowerCase() === name; })[0]; }
+
+  function signinPin(q, store) {
+    if (store.fails(0) >= 20) fail('locked');
+    var a = byName(store.load('agents').map(cleanAgent), q.name);
+    if (!a || !a.active || !a.pin || !/^\d{4,6}$/.test(String(q.pin || '')) || a.pin !== pinHash(store, a.id, String(q.pin))) { store.fails(1); fail('bad_pin'); }
+    return {ok: true, code: a.code, role: 'agent', agent: publicAgent(a)};
+  }
+
+  // Names for "Who introduced you?" (only after the right team code).
+  function joinInfo(q, store) {
+    if (store.fails(0) >= 20) fail('locked');
+    checkTeam(store, q.team);
+    return {ok: true, leaderName: settingsObj(store).leaderName || 'GM',
+      people: store.load('agents').map(cleanAgent).filter(function (a) { return a.active; }).map(function (a) { return {id: a.id, name: a.name}; })
+        .sort(function (x, y) { return x.name.localeCompare(y.name); })};
+  }
+
+  function signup(q, store) {
+    if (store.fails(0) >= 20) fail('locked');
+    return store.withLock(function () {
+      checkTeam(store, q.team);
+      checkPin(q.pin);
+      var rows = store.load('agents').map(cleanAgent);
+      var a = {id: 'A' + newId(store, 6), code: '', active: true, created: nowIso(store), name: '', email: '', phone: '', start: '', note: '', introducer: '', kind: q.kind === 'introducer' ? 'introducer' : ''};
+      agentFields({name: q.name, email: q.email, phone: q.phone, start: a.kind ? '' : (q.start || today(store))}, a, true);
+      if (byName(rows, a.name)) fail('name_taken');
+      var intro = str(q.introducer, 20);
+      if (intro) { if (!rows.some(function (x) { return x.id === intro && x.active; })) fail('bad_introducer'); a.introducer = intro; }
+      do { a.code = newId(store, 8); } while (rows.some(function (x) { return x.code === a.code; }));
+      a.pin = pinHash(store, a.id, String(q.pin));
+      rows.push(a);
+      store.save('agents', rows);
+      var by = rows.filter(function (x) { return x.id === a.introducer; })[0];
+      log(store, a.name, a.kind ? 'signed up as introducer' : 'signed up', a.id, '', (a.kind ? '' : 'start ' + a.start) + (by ? ', introduced by ' + by.name : ''));
+      return {ok: true, code: a.code, role: 'agent', agent: publicAgent(a)};
+    });
+  }
 
   function handle(q, store) {
     if (!q || typeof q !== 'object') fail('invalid_request');
     if (q.op === 'ping') return {ok: true, app: '90Days Kick Start', syllabus: SYLLABUS_VERSION};
+    if (q.op === 'signin') return store.withLock(function () { return signinPin(q, store); });
+    if (q.op === 'joinInfo') return store.withLock(function () { return joinInfo(q, store); });
+    if (q.op === 'signup') return signup(q, store);
     var me = who(q, store);
     if (q.op === 'login') return me.role === 'leader' ? {role: 'leader'} : {role: 'agent', agent: publicAgent(me.agent)};
     return store.withLock(function () {
@@ -117,7 +170,7 @@ var CORE = (function () {
   }
 
   // What an agent sees about themself (no leader note, no graduation note).
-  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || '', introducer: a.introducer || '', kind: a.kind === 'introducer' ? 'introducer' : ''}; }
+  function publicAgent(a) { return {id: a.id, name: a.name, email: a.email, phone: a.phone, start: a.start, active: a.active !== false && a.active !== 'false', grad: a.grad || '', gradDate: a.gradDate || '', introducer: a.introducer || '', kind: a.kind === 'introducer' ? 'introducer' : '', hasPin: !!a.pin}; }
 
   /* ---------- agent (own board) and introducer (their downline) ---------- */
   function agentOp(q, store, me) {
@@ -134,6 +187,7 @@ var CORE = (function () {
         return saveAppt(q, store, me, me.name);
       // introducer actions, always limited to their own downline
       case 'team': return team(store, me);
+      case 'setPin': return setPin(q, store, me);
       case 'addAgent': return addAgent(q, store, me);
       case 'updateAgent': downlineAgent(store, me, str(q.id, 20)); return updateAgent(q, store, me);
       case 'review': downlineAgent(store, me, str(q.agentId, 20)); return review(q, store, me);
@@ -150,7 +204,7 @@ var CORE = (function () {
       activity: store.load('activity').filter(mineOnly),
       appts: store.load('appts').filter(mineOnly),
       syllabus: syllabus(store),
-      settings: {leaderName: settingsObj(store).leaderName || 'Your leader'},
+      settings: {leaderName: settingsObj(store).leaderName || 'Your leader', teamCode: settingsObj(store).teamCode || ''},
       log: store.load('log').filter(function (l) { return ids[l.agentId]; }).slice(-60).reverse(),
       today: today(store)
     };
@@ -165,7 +219,7 @@ var CORE = (function () {
       activity: store.load('activity').filter(function (r) { return r.agentId === me.id; }),
       appts: store.load('appts').filter(function (r) { return r.agentId === me.id; }),
       syllabus: KS.forAgent(syllabus(store), me),
-      settings: {leaderName: settingsObj(store).leaderName || 'Your leader'},
+      settings: {leaderName: settingsObj(store).leaderName || 'Your leader', teamCode: settingsObj(store).teamCode || ''},
       today: today(store)
     };
   }
@@ -244,7 +298,7 @@ var CORE = (function () {
   function board(store) {
     var all = syllabus(store, true);
     return {
-      agents: store.load('agents').map(cleanAgent),
+      agents: store.load('agents').map(cleanAgent).map(noPin),
       progress: store.load('progress'),
       activity: store.load('activity'),
       appts: store.load('appts'),
@@ -303,12 +357,22 @@ var CORE = (function () {
       if (q.introducer != null) setIntroducer(rows, a, q.introducer);
     }
     if (q.newCode === true) { do { a.code = newId(store, 8); } while (rows.some(function (x) { return x !== a && x.code === a.code; })); }
+    if (q.resetPin === true) a.pin = '';   // they sign in with their code once, then choose a new PIN
     store.save('agents', rows);
     var name = function (id) { var x = rows.filter(function (r) { return r.id === id; })[0]; return x ? x.name : 'GM'; };
     log(store, by ? by.name : 'Leader', 'updated agent', a.id, '', (before !== a.start ? 'start ' + (before || '-') + ' to ' + a.start + '; ' : '') +
-      (!by && q.active != null ? (a.active ? 'reactivated' : 'archived') : '') + (q.newCode ? 'new sign-in code' : '') +
+      (!by && q.active != null ? (a.active ? 'reactivated' : 'archived') : '') + (q.newCode ? 'new sign-in code' : '') + (q.resetPin ? 'PIN reset' : '') +
       (beforeIntro !== a.introducer ? 'introducer ' + name(beforeIntro) + ' to ' + name(a.introducer) : ''));
-    return {ok: true, agent: by ? teamAgent(a) : a};
+    return {ok: true, agent: by ? teamAgent(a) : noPin(a)};
+  }
+
+  function setPin(q, store, me) {
+    checkPin(q.pin);
+    var rows = store.load('agents'), a = findAgent(rows, me.id);
+    a.pin = pinHash(store, a.id, String(q.pin));
+    store.save('agents', rows);
+    log(store, a.name, 'set PIN', a.id, '', '');
+    return {ok: true};
   }
 
   function deleteAgent(q, store) {
@@ -342,12 +406,13 @@ var CORE = (function () {
   }
 
   function saveSettings(q, store) {
-    var rows = store.load('settings'), allowed = {leaderName: 60, leaderEmail: 120, emailAlerts: 3, appUrl: 200};
+    var rows = store.load('settings'), allowed = {leaderName: 60, leaderEmail: 120, emailAlerts: 3, appUrl: 200, teamCode: 40};
     Object.keys(allowed).forEach(function (k) {
       if (q[k] == null) return;
       var v = str(q[k], allowed[k]);
       if (k === 'emailAlerts' && v !== 'on' && v !== 'off') fail('invalid_request');
       if (k === 'leaderEmail' && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) fail('bad_email');
+      if (k === 'teamCode' && v && (v.length < 6 || /\s/.test(v))) fail('team_code_short');
       var r = rows.filter(function (x) { return x.key === k; })[0];
       if (r) r.value = v; else rows.push({key: k, value: v});
     });

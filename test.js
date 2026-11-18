@@ -13,6 +13,7 @@ const store = {
   withLock: fn => fn(), prop: k => k === 'LEADER_CODE' ? 'leader-secret-123' : '',
   fails: n => (failsN += n, failsN - n), now: () => clock, random: () => ((seq = (seq * 9301 + 49297) % 233280) / 233280),
   putFile: (a, name, mime, b64) => { const id = 'F' + Object.keys(files).length; files[id] = {name, mime, b64}; return {id, url: ''}; },
+  hash: v => require('crypto').createHash('sha256').update(v).digest('hex'),
   getFile: id => files[id], trashFile: id => { delete files[id]; }, mail: (to, subject, body) => outbox.push({to, subject, body})
 };
 const call = q => CORE.handle(q, store);
@@ -312,6 +313,48 @@ ok('introducers add and monitor their own downline only; the GM sees everything'
   call({op: 'deleteAgent', code: L, id: n1.id, confirmName: 'New Nora'});
   assert.equal(db.agents.find(a => a.id === n2.id).introducer, sen.id);
   assert.deepEqual(call({op: 'team', code: sen.code}).agents.map(a => a.name), ['Second Gen Gary']);
+});
+
+ok('agents sign themselves up with the team code, then sign in with name + PIN', () => {
+  failsN = 0;
+  err({op: 'joinInfo', team: 'anything'}, 'signup_closed');                       // off until the GM sets a team code
+  err({op: 'settings', code: L, teamCode: 'abc'}, 'team_code_short');
+  call({op: 'settings', code: L, teamCode: 'Redefine2026'});
+  err({op: 'joinInfo', team: 'wrong-code'}, 'bad_team');
+  assert.equal(failsN, 1); failsN = 0;
+  const info = call({op: 'joinInfo', team: 'redefine2026'});                       // not case-sensitive
+  assert.ok(info.people.length > 0 && info.people.every(p => p.id && p.name && !p.code));
+  const sam = db.agents.find(a => a.name === 'Senior Sam');
+  err({op: 'signup', team: 'Redefine2026', name: 'Pin Pat', pin: '12'}, 'pin_format');
+  err({op: 'signup', team: 'Redefine2026', name: 'Senior Sam', pin: '1234'}, 'name_taken');
+  const r = call({op: 'signup', team: 'Redefine2026', name: 'Pin Pat', pin: '4321', phone: '60111', introducer: sam.id});
+  assert.match(r.code, /^[A-Z2-9]{8}$/); assert.equal(r.agent.introducer, sam.id); assert.equal(r.agent.hasPin, true);
+  const pat = db.agents.find(a => a.name === 'Pin Pat');
+  assert.ok(pat.pin && pat.pin !== '4321' && pat.start === '2026-11-04');           // PIN stored only as a hash; starts today
+  assert.ok(call({op: 'team', code: sam.code}).agents.some(a => a.name === 'Pin Pat'));   // lands in the introducer's team
+  assert.ok(call({op: 'team', code: sam.code}).agents.every(a => a.pin === undefined));
+  assert.ok(call({op: 'board', code: L}).agents.every(a => a.pin === undefined));
+  // sign in with name + PIN (name not case-sensitive); wrong PIN refused and counted
+  assert.equal(call({op: 'signin', name: 'pin pat', pin: '4321'}).code, r.code);
+  err({op: 'signin', name: 'Pin Pat', pin: '0000'}, 'bad_pin');
+  err({op: 'signin', name: 'Nobody', pin: '4321'}, 'bad_pin');
+  assert.equal(failsN, 2); failsN = 0;
+  // change PIN; introducer can reset it; then only the code works until a new PIN is set
+  call({op: 'setPin', code: r.code, pin: '777777'});
+  assert.equal(call({op: 'signin', name: 'Pin Pat', pin: '777777'}).code, r.code);
+  call({op: 'updateAgent', code: sam.code, id: pat.id, resetPin: true});
+  err({op: 'signin', name: 'Pin Pat', pin: '777777'}, 'bad_pin');
+  assert.equal(call({op: 'login', code: r.code}).role, 'agent');
+  // a senior can sign up as an introducer account; archived agents cannot sign in
+  const sr = call({op: 'signup', team: 'Redefine2026', name: 'Self Senior', pin: '2468', kind: 'introducer'});
+  assert.equal(sr.agent.kind, 'introducer');
+  call({op: 'updateAgent', code: L, id: sr.agent.id, active: false});
+  err({op: 'signin', name: 'Self Senior', pin: '2468'}, 'bad_pin');
+  failsN = 0;
+  // GM turns self sign-up off by clearing the team code
+  call({op: 'settings', code: L, teamCode: ''});
+  err({op: 'signup', team: 'Redefine2026', name: 'Late Larry', pin: '1111'}, 'signup_closed');
+  assert.ok(db.log.some(l => l.action === 'signed up' && l.by === 'Pin Pat'));
 });
 
 ok('locks out after 20 wrong codes', () => {

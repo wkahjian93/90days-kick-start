@@ -205,3 +205,13 @@ table.act tfoot td { font-weight: 700; border-bottom: 0; }
 .switchbar { display: flex; gap: 6px; padding: 8px 16px; background: var(--ink); border-top: 1px solid rgba(255,255,255,.08); }
 .switchbar button { flex: 1; border: 1px solid rgba(255,255,255,.18); background: transparent; color: #fff; border-radius: 10px; padding: 8px; font-weight: 600; font-size: 13.5px; cursor: pointer; }
 .switchbar button.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
+
+/* sign in / create account */
+.login label.lf { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 10px 0 5px; }
+.login select { width: 100%; padding: 13px 12px; border-radius: 12px; border: 1px solid #D5D2CC; background: #fff; color: var(--ink); font-size: 16px; margin-bottom: 4px; }
+.login input[type=date] { margin-bottom: 4px; }
+.login .fine a { color: var(--ink); font-weight: 600; }
+.pinnudge { display: flex; align-items: center; gap: 10px; background: var(--amber-bg); border: 1px solid #F0D9A8; border-radius: 12px; padding: 10px 12px; font-size: 13.5px; margin-bottom: 10px; }
+.pinnudge span { flex: 1; }
+.joinbox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.joinbox > div { flex: 1; min-width: 200px; }

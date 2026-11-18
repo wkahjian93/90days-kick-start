@@ -92,6 +92,10 @@ var GAS = (function () {
     },
     now: function () { return new Date(); },
     random: Math.random,
+    hash: function (s) {
+      return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)
+        .map(function (b) { return ((b + 256) % 256).toString(16).padStart(2, '0'); }).join('');
+    },
     putFile: function (agent, name, mime, b64) {
       var f = folder(agent).createFile(Utilities.newBlob(Utilities.base64Decode(b64), mime, name));
       return {id: f.getId(), url: f.getUrl()};
