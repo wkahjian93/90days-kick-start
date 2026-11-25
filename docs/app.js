@@ -1,4 +1,4 @@
-/* 90Days Kick Start app: leader dashboard, agent board, homework cards. */
+/* REDEFINE Meeting App (includes the 90 Days Kick Start training): leader dashboard, agent board, homework cards. */
 (function () {
   var API = (window.KS_CONFIG && window.KS_CONFIG.api) || '';
   var $app = document.getElementById('app');
@@ -121,7 +121,7 @@
   function loginShell(inner) {
     return '<div class="login"><div class="box">' +
       '<img class="brandlogo" src="logo.png" alt="REDEFINE">' +
-      '<div class="mark">90</div><h2>Days Kick Start</h2>' + inner + '</div></div>';
+      '<h2 class="appname">REDEFINE<br>Meeting App</h2>' + inner + '</div></div>';
   }
 
   function renderLogin(msg, mode) {
@@ -306,10 +306,10 @@
     });
 
     var backMine = !isGM() && st.me && st.me.kind !== 'introducer';
-    $app.innerHTML = topBar(isGM() ? 'Team Progress' : 'My recruits', isGM() ? '90Days Kick Start' : 'Hi ' + (st.me ? st.me.name : ''), backMine ? '<button class="icon" id="back" aria-label="My 90 Days">←</button>' : '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
+    $app.innerHTML = topBar(isGM() ? 'Team Progress' : 'My recruits', isGM() ? 'REDEFINE Meeting App' : 'Hi ' + (st.me ? st.me.name : ''), backMine ? '<button class="icon" id="back" aria-label="My 90 Days">←</button>' : '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       (backMine ? '<div class="switchbar"><button id="tomine">📘 My 90 Days</button><button class="on">👥 My recruits</button></div>' : '') +
       '<div class="wrap">' + pinNudge() +
-      '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE · 90Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
+      '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE Meeting App · 90 Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       '<div class="stats">' +
         '<div class="stat"><b>' + act.length + '</b><span>In training' + (gradCount ? ' · 🎓 ' + gradCount + ' graduated' : '') + '</span></div>' +
         '<div class="stat"><b>' + avg + '%</b><span>Average progress</span></div>' +
@@ -406,7 +406,7 @@
     weeks.sort(function (x, y) { return x - y; });
 
     var myAlerts = leader ? [] : KS.alerts(agents(), syl(), d.progress, t, a.id, d.appts);
-    var html = topBar(leader ? a.name : 'My 90 Days', leader ? '90Days Kick Start' : 'Hi ' + a.name,
+    var html = topBar(leader ? a.name : 'My 90 Days', leader ? 'REDEFINE Meeting App' : 'Hi ' + a.name,
       leader ? '<button class="icon" id="back" aria-label="Back">←</button>' : '',
       '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       (!leader ? '<div class="switchbar"><button class="on">📘 My 90 Days</button><button id="toteam">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button></div>' : '') +
@@ -544,7 +544,7 @@
     var topics = KS.forAgent(syl(), a).filter(function (it) { return it.wk === w && it.kind === 'training'; }).map(function (it) { return it.title; });
     var title = '90 Days Kick Start · ' + wkName(w) + (mgr() ? ' · ' + a.name : ' training');
     var notes = (topics.length ? 'Training: ' + topics.join(', ') + '\n' : '') + (note ? note + '\n' : '') +
-      'Agent: ' + a.name + '\nOpen 90Days Kick Start: ' + ((st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0]);
+      'Agent: ' + a.name + '\nOpen REDEFINE Meeting App: ' + ((st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0]);
     var q = 't=' + encodeURIComponent(title.slice(0, 120)) + '&d=' + encodeURIComponent(date) + (time ? '&s=' + encodeURIComponent(time) : '') + '&n=' + encodeURIComponent(notes.slice(0, 1400));
     return CAL_URL + '#/new?' + q;
   }
@@ -673,7 +673,7 @@
     var code = st.data && st.data.settings && st.data.settings.teamCode, url = (st.data.settings && st.data.settings.appUrl) || location.href.split('?')[0].split('#')[0];
     if (!code) return isGM() ? '<div class="panel note" style="margin-bottom:10px">💡 Let agents create their own account: set a <b>team code</b> in ☰ → Settings.</div>' : '';
     var who = isGM() ? '' : (st.me ? st.me.name : '');
-    var msg = 'Join REDEFINE 90 Days Kick Start 🎯\n\n1. Open ' + url + '\n2. Tap "New here? Create my account"\n3. Team code: ' + code + '\n4. Choose your name, a PIN' + (who ? ', and "' + who + '" as the person who introduced you' : '') + '.';
+    var msg = 'Join the REDEFINE Meeting App 🎯\n\n1. Open ' + url + '\n2. Tap "New here? Create my account"\n3. Team code: ' + code + '\n4. Choose your name, a PIN' + (who ? ', and "' + who + '" as the person who introduced you' : '') + '.';
     return '<div class="panel joinbox" style="margin-bottom:10px"><div><b>New agents can join by themselves</b><div class="note">Team code <b>' + esc(code) + '</b>. They pick ' + (who ? 'you' : 'their introducer') + ' when signing up.</div></div>' +
       '<button class="btn ghost small" id="copyjoin" data-msg="' + esc(msg) + '">Copy join message</button></div>';
   }
@@ -891,8 +891,8 @@
     sheet(html, function (el, close) {
       function v(k) { var f = el.querySelector('#e-' + k); return f ? f.value.trim() : ''; }
       var ek = el.querySelector('#e-kind'); if (ek) ek.onchange = function () { el.querySelector('#e-startwrap').classList.toggle('hidden', ek.value === 'introducer'); };
-      function invite(ag) { if (ag.kind === 'introducer') return 'Hi ' + ag.name + ', here is your 90Days Kick Start login. Add the new agents you introduce and follow their 90 days with me. 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app.';
-        return 'Hi ' + ag.name + ', welcome to your 90 Days Kick Start! 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app. Your syllabus, homework and progress are all inside.'; }
+      function invite(ag) { if (ag.kind === 'introducer') return 'Hi ' + ag.name + ', here is your REDEFINE Meeting App login. Add the new agents you introduce and follow their 90 days with me. 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app.';
+        return 'Hi ' + ag.name + ', welcome to the REDEFINE Meeting App! Your 90 Days Kick Start starts here. 🎯\n\nOpen: ' + appUrl + '\nYour sign-in code: ' + ag.code + '\n\nTip: add it to your home screen so it opens like an app. Your syllabus, homework and progress are all inside.'; }
       if (a) {
         if (el.querySelector('#e-copy')) el.querySelector('#e-copy').onclick = function () { copy(invite(a)); };
         var wa = el.querySelector('#e-wa'); if (wa) wa.href = 'https://wa.me/' + a.phone.replace(/\D/g, '') + '?text=' + encodeURIComponent(invite(a));

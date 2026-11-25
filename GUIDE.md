@@ -1,4 +1,6 @@
-# 90Days Kick Start: how to use it
+# REDEFINE Meeting App: how to use it
+
+(Formerly "90Days Kick Start". Same link, same accounts; the 90 Days Kick Start training is inside.)
 
 **The problem it solves:** the Trello board holds the syllabus, but you can't see at a glance which new agent is behind, which homework is missing, or when the next training needs booking.
 **What the app does:** every agent gets their own 90-day board that starts on their join date. They submit homework as proof, and you approve it or send it back. You and the agent are both alerted when a week's training is due.

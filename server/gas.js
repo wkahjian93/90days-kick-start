@@ -5,7 +5,7 @@
    Drive folder "90Days Kick Start Homework", one sub-folder per agent. Both are created by setup(). */
 
 function reply(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
-function doGet() { return reply({ok: true, app: '90Days Kick Start'}); }
+function doGet() { return reply({ok: true, app: 'REDEFINE Meeting App'}); }
 
 function doPost(e) {
   try {
@@ -106,7 +106,7 @@ var GAS = (function () {
       return {name: f.getName(), mime: blob.getContentType(), b64: Utilities.base64Encode(blob.getBytes()), url: f.getUrl()};
     },
     trashFile: function (id) { DriveApp.getFileById(id).setTrashed(true); },   // Drive keeps trash for 30 days
-    mail: function (to, subject, body) { MailApp.sendEmail({to: to, subject: subject, body: body, name: '90Days Kick Start'}); }
+    mail: function (to, subject, body) { MailApp.sendEmail({to: to, subject: subject, body: body, name: 'REDEFINE Meeting App'}); }
   };
 })();
 

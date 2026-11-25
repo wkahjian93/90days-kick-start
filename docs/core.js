@@ -163,7 +163,7 @@ var CORE = (function () {
 
   function handle(q, store) {
     if (!q || typeof q !== 'object') fail('invalid_request');
-    if (q.op === 'ping') return {ok: true, app: '90Days Kick Start', syllabus: SYLLABUS_VERSION};
+    if (q.op === 'ping') return {ok: true, app: 'REDEFINE Meeting App', syllabus: SYLLABUS_VERSION};
     if (q.op === 'signin') return store.withLock(function () { return signinPin(q, store); });
     if (q.op === 'joinInfo') return store.withLock(function () { return joinInfo(q, store); });
     if (q.op === 'signup') return signup(q, store);
@@ -550,7 +550,7 @@ var CORE = (function () {
     var out = [], foot = set.appUrl ? '\n\nOpen the app: ' + set.appUrl : '', syl = syllabus(store), appts = store.load('appts');
     var lead = KS.alerts(agents, syl, progress, t, null, appts);
     if (set.leaderEmail && lead.length) {
-      out.push({to: set.leaderEmail, who: 'Leader', subject: '90Days Kick Start: ' + lead.length + ' item(s) need you (' + t + ')',
+      out.push({to: set.leaderEmail, who: 'Leader', subject: 'REDEFINE Meeting App: ' + lead.length + ' item(s) need you (' + t + ')',
         body: 'Good morning ' + (set.leaderName || '') + ',\n\n' + lead.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES); }).join('\n') + foot});
     }
     // One email per person: their own next steps (new agents) plus what their recruits need from them (introducers).
@@ -560,7 +560,7 @@ var CORE = (function () {
       var ids = downlineIds(agents, a.id);
       var teamA = KS.alerts(agents.filter(function (x) { return ids[x.id]; }), syl, progress, t, null, appts).filter(function (x) { return x.type !== 'graduate'; });
       if (!mineA.length && !teamA.length) return;
-      out.push({to: a.email, who: a.name, subject: '90Days Kick Start: ' + (teamA.length ? 'your recruits and next steps' : 'your next steps') + ' (' + t + ')',
+      out.push({to: a.email, who: a.name, subject: 'REDEFINE Meeting App: ' + (teamA.length ? 'your recruits and next steps' : 'your next steps') + ' (' + t + ')',
         body: 'Hi ' + a.name + ',\n\n' +
           (mineA.length ? mineA.map(function (x) { return '• ' + KS.alertText(x, WEEK_NAMES, true, set.leaderName); }).join('\n') : '') +
           (mineA.length && teamA.length ? '\n\n' : '') +

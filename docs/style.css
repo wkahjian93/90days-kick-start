@@ -42,6 +42,7 @@ a { color: var(--blue); }
 .login .box { max-width: 400px; width: 100%; margin: 0 auto; }
 .login .brandlogo { height: 58px; display: block; margin-bottom: 18px; }
 .login .mark { font: 700 50px/1 var(--serif); color: var(--gold-d); }
+.login h2.appname { font: 700 28px/1.15 var(--serif); color: var(--gold-d); margin: 6px 0 4px; }
 .login h2 { font: 600 28px/1.15 var(--serif); margin: 4px 0 6px; }
 .login p { color: var(--muted); margin: 0 0 18px; }
 .login input { width: 100%; padding: 14px; border-radius: 12px; border: 1px solid #D5D2CC; background: #fff; color: var(--ink); font-size: 17px; letter-spacing: .06em; margin-bottom: 10px; }

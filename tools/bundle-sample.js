@@ -1,5 +1,5 @@
 // Makes one self-contained sample page (sample mode only, no server) for previewing on a phone.
-// Run: node tools/bundle-sample.js  ->  sample/90Days Kick Start sample.html
+// Run: node tools/bundle-sample.js  ->  sample/REDEFINE Meeting App sample.html
 const fs = require('fs'), path = require('path');
 const d = f => fs.readFileSync(path.join(__dirname, '..', 'docs', f), 'utf8');
 let html = d('index.html');
@@ -18,7 +18,7 @@ html = html
 const uri = (f, type) => 'data:' + type + ';base64,' + fs.readFileSync(path.join(__dirname, '..', 'docs', f)).toString('base64');
 const team = uri('team.jpg', 'image/jpeg'), logo = uri('logo.png', 'image/png'), mark = uri('mark.png', 'image/png');
 html = html.split('url(team.jpg)').join('url(' + team + ')').split('src="logo.png"').join('src="' + logo + '"').split('src="mark.png"').join('src="' + mark + '"');
-const out = path.join(__dirname, '..', 'sample', '90Days Kick Start sample.html');
+const out = path.join(__dirname, '..', 'sample', 'REDEFINE Meeting App sample.html');
 fs.mkdirSync(path.dirname(out), {recursive: true});
 fs.writeFileSync(out, html);
 console.log('Wrote ' + out + ' (' + Math.round(html.length / 1024) + ' KB)');

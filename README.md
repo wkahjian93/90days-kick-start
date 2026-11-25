@@ -1,4 +1,6 @@
-# 90Days Kick Start
+# REDEFINE Meeting App
+
+Formerly "90Days Kick Start". The 90 Days Kick Start new-agent training lives inside it.
 
 Phone app for the 90-day new agent syllabus: agents submit homework, the leader reviews it, and reminders go out when training is due.
 
