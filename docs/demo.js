@@ -68,7 +68,20 @@ var DEMO = (function () {
     },
     getFile: function (id) { var f = db.files[id]; if (!f) throw Object.assign(new Error('not_found'), {appCode: 'not_found'}); return f; },
     trashFile: function (id) { delete db.files[id]; persist(); },
-    mail: function (to, subject, body) { db.outbox.push({to: to, subject: subject, body: body, at: new Date().toISOString()}); persist(); }
+    mail: function (to, subject, body) { db.outbox.push({to: to, subject: subject, body: body, at: new Date().toISOString()}); persist(); },
+    // mini mini in sample mode: no audio leaves the phone, so the "transcript" and the minutes are made up
+    transcribe: function () {
+      return {text: '好，我们开始今天的会议。这个月的 ANP 目标是 25 千，现在做到 12 千。Mei Ling，你这个星期要约 10 个 prospect，星期五前给我名单。' +
+        'Aiman 你的 closing 很好，继续保持，下个星期帮 Daniel 做 joinfield。mini mini，记下来：下个月开始每个星期三早上做 role play。下次开会是下个星期一晚上八点。'};
+    },
+    chat: function () {
+      var mon = KS.addDays(KS.todayMYT(), ((8 - new Date().getDay()) % 7) || 7);
+      return {title: '每周团队会议（样本）', language: 'zh', summary: ['本月 ANP 目标 25 千，目前完成 12 千，还差 13 千。', 'Aiman 的 closing 表现好，下周带 Daniel 做 joinfield。'],
+        decisions: ['下个月开始每个星期三早上做 role play。'],
+        people: [{name: 'Mei Ling', tasks: [{what: '约 10 个 prospect，交名单', due: '星期五前'}], homework: [], leader_comments: ['名单要写清楚每个人的背景。']},
+          {name: 'Aiman', tasks: [{what: '下周带 Daniel 做 joinfield', due: ''}], homework: [], leader_comments: ['closing 很好，继续保持。']}],
+        mini_mini_notes: ['下个月开始每个星期三早上做 role play。'], next_meeting: {date: mon, time: '20:00', note: '下个星期一晚上八点'}, who_is_unclear: ['逐字稿没有标明说话者，主要内容推断是领导所说。']};
+    }
   };
 
   return {

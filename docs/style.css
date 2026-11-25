@@ -216,3 +216,16 @@ table.act tfoot td { font-weight: 700; border-bottom: 0; }
 .pinnudge span { flex: 1; }
 .joinbox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .joinbox > div { flex: 1; min-width: 200px; }
+
+/* mini mini recorder */
+.recbox { background: var(--ink); color: #fff; border-radius: var(--r); padding: 28px 16px; text-align: center; }
+.recdot { width: 18px; height: 18px; border-radius: 50%; background: #E5484D; margin: 0 auto 10px; animation: recpulse 1.2s infinite; }
+@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+.rectime { font: 700 52px/1.1 var(--serif); letter-spacing: .02em; }
+.rectitle { color: var(--gold); margin-top: 6px; font-weight: 600; }
+.recbox .note { color: #c9c4b8; margin-top: 8px; }
+.recbox .spin { border-color: rgba(255,255,255,.25); border-top-color: var(--gold); }
+.sheet input[type=search], .sheet input[type=time] { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; font-size: 16px; }
+.mtform label.f { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 14px 0 5px; }
+.mtform input[type=text], .mtform input[type=date], .mtform input[type=time], .mtform textarea, .mtform select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; font-size: 16px; }
+.mtform textarea { resize: vertical; }

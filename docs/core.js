@@ -169,6 +169,7 @@ var CORE = (function () {
     if (q.op === 'signup') return signup(q, store);
     if (q.op === 'calFeed') return calFeed(q, store);   // REDEFINE Calendar collects with a personal link code
     var me = who(q, store);
+    if (minutesMod && minutesMod.OPS[q.op]) { if (me.agent) cleanAgent(me.agent); return minutesMod.handle(q, store, me); }   // mini mini meeting minutes (minutes.js)
     if (q.op === 'login') return me.role === 'leader' ? {role: 'leader'} : {role: 'agent', agent: publicAgent(me.agent)};
     return store.withLock(function () {
       if (me.role === 'agent') return agentOp(q, store, cleanAgent(me.agent));
@@ -502,6 +503,7 @@ var CORE = (function () {
       return {id: a.id + '-w' + (+r.wk), agent: a.name, mine: !gm && r.agentId === me.id, wk: +r.wk, week: KS.weekLabel(+r.wk, WEEK_NAMES),
         date: str(r.date), time: str(r.time), note: str(r.note, 200), by: str(r.by, 60), updated: str(r.updated, 40)};
     });
+    if (minutesMod) items = items.concat(minutesMod.calItems(store, gm, me, from));   // next meetings set from approved minutes
     return {ok: true, now: nowIso(store), name: gm ? leaderName : me.name, leader: leaderName, appUrl: str(set.appUrl, 200), items: items};
   }
 
@@ -619,7 +621,15 @@ var CORE = (function () {
     return {ok: true, sent: emails.length};
   }
 
-  return {handle: handle, TABLES: TABLES, JSON_COLS: JSON_COLS, sendReminders: sendReminders, settingsObj: settingsObj, syllabus: syllabus, defaultDue: defaultDue};
+  /* mini mini (minutes.js) plugs in here: its tables join ours and it uses these helpers */
+  var minutesMod = null;
+  function useMinutes(M) {
+    Object.assign(TABLES, M.TABLES); Object.assign(JSON_COLS, M.JSON_COLS);
+    M.attach({settingsObj: settingsObj, nowIso: nowIso, today: today, newId: newId, log: log, truthy: truthy});
+    minutesMod = M;
+  }
+
+  return {handle: handle, useMinutes: useMinutes, TABLES: TABLES, JSON_COLS: JSON_COLS, sendReminders: sendReminders, settingsObj: settingsObj, syllabus: syllabus, defaultDue: defaultDue};
 })();
 
 if (typeof module !== 'undefined') module.exports = CORE;

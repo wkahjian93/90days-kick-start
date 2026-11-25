@@ -1,6 +1,8 @@
 /* ---------- Google Apps Script part ----------
    Script properties (Project Settings > Script properties):
      LEADER_CODE   required, at least 10 characters; the code you sign in with as leader
+     OPENAI_API_KEY  for mini mini meeting minutes (typed in by the GM; never in the code)
+     TRANSCRIBE_MODEL / SUMMARY_MODEL  optional; default gpt-transcribe and gpt-6.2-sol
    Data is kept in a private Google Sheet "90Days Kick Start Data" and homework files in the
    Drive folder "90Days Kick Start Homework", one sub-folder per agent. Both are created by setup(). */
 
@@ -106,7 +108,36 @@ var GAS = (function () {
       return {name: f.getName(), mime: blob.getContentType(), b64: Utilities.base64Encode(blob.getBytes()), url: f.getUrl()};
     },
     trashFile: function (id) { DriveApp.getFileById(id).setTrashed(true); },   // Drive keeps trash for 30 days
-    mail: function (to, subject, body) { MailApp.sendEmail({to: to, subject: subject, body: body, name: 'REDEFINE Meeting App'}); }
+    mail: function (to, subject, body) { MailApp.sendEmail({to: to, subject: subject, body: body, name: 'REDEFINE Meeting App'}); },
+    // mini mini: OpenAI speech to text (Mandarin + English + Malay) and the summary. The key stays in Script properties.
+    transcribe: function (o) {
+      var key = P.getProperty('OPENAI_API_KEY'); if (!key) { var e = new Error('ai_no_key'); e.appCode = 'ai_no_key'; throw e; }
+      var b = 'mm' + Utilities.getUuid().replace(/-/g, ''), bytes = [];
+      function add(x) { bytes = bytes.concat(typeof x === 'string' ? Utilities.newBlob(x).getBytes() : x); }
+      var NL = '\r\n';
+      function field(k, v) { add('--' + b + NL + 'Content-Disposition: form-data; name="' + k + '"' + NL + NL + v + NL); }
+      field('model', P.getProperty('TRANSCRIBE_MODEL') || 'gpt-transcribe');
+      ['zh', 'en', 'ms'].forEach(function (l) { field('languages[]', l); });
+      (o.keywords || []).forEach(function (k) { field('keywords[]', k); });
+      if (o.prompt) field('prompt', o.prompt);
+      add('--' + b + NL + 'Content-Disposition: form-data; name="file"; filename="' + o.name + '"' + NL + 'Content-Type: ' + o.mime + NL + NL);
+      add(Utilities.base64Decode(o.b64)); add(NL + '--' + b + '--' + NL);
+      var r = UrlFetchApp.fetch('https://api.openai.com/v1/audio/transcriptions', {method: 'post', contentType: 'multipart/form-data; boundary=' + b,
+        payload: bytes, headers: {Authorization: 'Bearer ' + key}, muteHttpExceptions: true});
+      var j = {}; try { j = JSON.parse(r.getContentText()); } catch (e2) {}
+      if (r.getResponseCode() !== 200) throw new Error('transcribe ' + r.getResponseCode() + ': ' + ((j.error && j.error.message) || '').slice(0, 150));
+      return {text: j.text || '', languages: (j.languages || []).map(function (x) { return x.code; }).join(',')};
+    },
+    chat: function (o) {
+      var key = P.getProperty('OPENAI_API_KEY'); if (!key) { var e = new Error('ai_no_key'); e.appCode = 'ai_no_key'; throw e; }
+      var r = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: {Authorization: 'Bearer ' + key},
+        payload: JSON.stringify({model: P.getProperty('SUMMARY_MODEL') || 'gpt-6.2-sol', response_format: {type: 'json_object'},
+          messages: [{role: 'system', content: o.system}, {role: 'user', content: o.user}]})});
+      var j = {}; try { j = JSON.parse(r.getContentText()); } catch (e2) {}
+      if (r.getResponseCode() !== 200) throw new Error('summary ' + r.getResponseCode() + ': ' + ((j.error && j.error.message) || '').slice(0, 150));
+      return JSON.parse(j.choices[0].message.content);
+    }
   };
 })();
 
@@ -119,6 +150,12 @@ function dailyReminders() {
   });
 }
 
+/* Every 10 minutes (installed by setup): mini mini finishes meetings whose phone was closed, and deletes audio 30 days after approval. */
+function minutesTimer() {
+  var r = MINUTES.timer(GAS);
+  if (r.stopped || r.processed || r.audioDeleted) console.log('mini mini: ' + JSON.stringify(r));
+}
+
 /* Run once from the editor: creates the Sheet and Drive folder, asks for permissions, installs the 8am trigger. */
 function setup() {
   Object.keys(CORE.TABLES).forEach(function (t) { GAS.load(t); });
@@ -126,6 +163,9 @@ function setup() {
   MailApp.getRemainingDailyQuota();
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'dailyReminders') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('dailyReminders').timeBased().atHour(8).everyDays(1).inTimezone('Asia/Kuala_Lumpur').create();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'minutesTimer') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('minutesTimer').timeBased().everyMinutes(10).create();
+  UrlFetchApp.fetch('https://api.openai.com/v1/models', {muteHttpExceptions: true});   // asks for the 'connect to an external service' permission (mini mini)
   console.log('Ready. Data sheet: ' + SpreadsheetApp.openById(PropertiesService.getScriptProperties().getProperty('SHEET_ID')).getUrl());
   if ((PropertiesService.getScriptProperties().getProperty('LEADER_CODE') || '').length < 10) console.warn('Add LEADER_CODE (10+ characters) in Script properties before signing in.');
 }

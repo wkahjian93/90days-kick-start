@@ -11,10 +11,6 @@
 
 **Team Progress screen**
 - Four numbers at the top: active agents, average progress, items waiting for your review, overdue items.
-- **Needs you today**, most urgent first:
-  - 🟡 *Arrange training*: an agent's next week of training is due within 3 days, or already late. Book the session.
-  - 🔵 *Review*: an agent submitted homework. Tap it to open it.
-  - 🔴 *Overdue / Redo*: homework past its due date, or sent back and not yet fixed.
 - **Agent cards** are sorted with the most at-risk first. Each shows day X of 90, % approved, items waiting review, overdue items and the next training.
   - *On track*: nothing overdue. *Behind*: 1–2 overdue. *At risk*: 3+ overdue, or anything more than 7 days late.
 

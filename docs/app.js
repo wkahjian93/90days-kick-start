@@ -25,7 +25,8 @@
     team_code_short: 'Team code needs at least 6 letters or numbers, no spaces.',
     forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', bad_introducer: 'That introducer cannot be chosen (it would loop back to this agent).', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
-    invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', daily_limit: 'Daily limit reached. Try tomorrow.'
+    invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', consent_required: 'Tick that everyone knows the meeting is being recorded.',
+    meeting_closed: 'This recording has already been stopped.', meeting_not_ready: 'The minutes are not ready yet.', ai_no_key: 'mini mini is not switched on yet: the OpenAI key is missing on the server.', unmatched_people: 'Choose who each person is first.', daily_limit: 'Daily limit reached. Try tomorrow.'
   };
 
   /* ---------- helpers ---------- */
@@ -253,7 +254,10 @@
       renderLogin(ERR[e.code] || 'Sign-in failed.', 'code');
     }
   }
-  function signOut() { ls('ks_code', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; renderLogin(); }
+  function signOut() {
+    if (MINI.recording()) { toast('Stop the recording first.', true); return; }
+    ls('ks_code', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; if (window.APP) window.APP.st = st; renderLogin();
+  }
 
   async function loadBoard() { st.data = await api('board'); }
   async function loadMine() {
@@ -274,6 +278,7 @@
     rerender();
   }
   function rerender() {
+    if (st.screen === 'rec' || st.screen === 'meeting' || st.screen === 'meetings') return;   // mini mini screens draw themselves
     if (st.screen === 'team') goTeam();
     else if (st.screen === 'agent') goAgent(st.agentId, true);
     else if (st.screen === 'history') goHistory();
@@ -310,6 +315,7 @@
       (backMine ? '<div class="switchbar"><button id="tomine">📘 My 90 Days</button><button class="on">👥 My recruits</button></div>' : '') +
       '<div class="wrap">' + pinNudge() +
       '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE Meeting App · 90 Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
+      MINI.homeCard() +
       '<div class="stats">' +
         '<div class="stat"><b>' + act.length + '</b><span>In training' + (gradCount ? ' · 🎓 ' + gradCount + ' graduated' : '') + '</span></div>' +
         '<div class="stat"><b>' + avg + '%</b><span>Average progress</span></div>' +
@@ -337,6 +343,7 @@
     var bk = document.getElementById('back'); if (bk) bk.onclick = goMine;
     var tm = document.getElementById('tomine'); if (tm) tm.onclick = goMine;
     bindPinAndJoin();
+    MINI.bindHome();
   }
 
   var ALERT_TAG = {graduate: 'Graduation', arrange: 'Arrange training', booked: 'Training booked', review: 'Review', overdue: 'Overdue', redo: 'Redo', soon: 'Due soon', nostart: 'Fix data'};
@@ -374,6 +381,7 @@
   function leaderMenu() {
     sheet('<h3>Menu</h3><div style="display:grid;gap:8px;margin-top:12px">' +
       '<button class="btn ghost" data-m="refresh">↻ Refresh</button>' +
+      '<button class="btn ghost" data-m="meet">🎙 Meetings (mini mini)</button>' +
       '<button class="btn ghost" data-m="remind">✉ Email reminders</button>' +
       '<button class="btn ghost" data-m="history">🕘 History</button>' +
       '<button class="btn ghost" data-m="cal">📅 Connect my REDEFINE Calendar</button>' +
@@ -383,7 +391,7 @@
       el.querySelectorAll('[data-m]').forEach(function (b) {
         b.onclick = function () {
           close();
-          ({refresh: refresh, remind: reminders, history: goHistory, cal: calSheet, settings: settings, syllabus: syllabusEditor, out: signOut})[b.dataset.m]();
+          ({refresh: refresh, meet: MINI.open, remind: reminders, history: goHistory, cal: calSheet, settings: settings, syllabus: syllabusEditor, out: signOut})[b.dataset.m]();
         };
       });
     });
@@ -421,7 +429,7 @@
       (st.tab === 'board' ? weeks.map(function (w) { return '<button data-w="' + w + '"><span class="d ' + weekDot(a, w, pm, t) + '"></span>' + esc(shortWk(w)) + '</button>'; }).join('') : '') + '</div>';
 
     if (st.tab === 'board') {
-      html += (myAlerts.length ? '<div class="wrap" style="padding-bottom:0"><div class="section-title" style="margin-top:4px">Your next steps</div><div class="alerts">' + myAlerts.slice(0, 6).map(alertRow).join('') + '</div></div>' : '') +
+      html += (!leader ? '<div class="wrap" style="padding-bottom:0">' + MINI.homeCard() + '</div>' : '') + (myAlerts.length ? '<div class="wrap" style="padding-bottom:0"><div class="section-title" style="margin-top:4px">Your next steps</div><div class="alerts">' + myAlerts.slice(0, 6).map(alertRow).join('') + '</div></div>' : '') +
         '<div class="board" id="board">' + weeks.map(function (w) { return column(a, w, pm, t); }).join('') + '</div>';
     } else {
       html += activityView(a);
@@ -442,6 +450,7 @@
     $app.querySelectorAll('[data-addcard]').forEach(function (b) { b.onclick = function () { editCard(null, {wk: +b.dataset.addcard, forAgent: a}); }; });
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w); }; });
     if (st.tab === 'activity') bindActivity(a);
+    if (!leader) MINI.bindHome();
     if (st.tab === 'board') {
       if (prevScroll != null) document.getElementById('board').scrollLeft = prevScroll;
       else scrollToWeek(s.day && s.day >= 1 ? firstOpenWeek(a, pm, t, s.week) : 0, true);
@@ -600,6 +609,7 @@
   function agentMenu() {
     sheet('<h3>Menu</h3><div style="display:grid;gap:8px;margin-top:12px">' +
       '<button class="btn ghost" data-m="refresh">↻ Refresh</button>' +
+      '<button class="btn ghost" data-m="meet">🎙 Meetings (mini mini)</button>' +
       (st.view === 'team' ? (st.me && st.me.kind !== 'introducer' ? '<button class="btn ghost" data-m="mine">📘 My 90 Days</button>' : '') : '<button class="btn ghost" data-m="team">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button>') +
       (st.view === 'team' ? '<button class="btn ghost" data-m="history">🕘 History of my recruits</button>' : '') +
       '<button class="btn ghost" data-m="pin">🔑 ' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</button>' +
@@ -607,6 +617,7 @@
       '<button class="btn ghost" data-m="install">📲 Add to home screen</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelector('[data-m=refresh]').onclick = function () { close(); refresh(); };
+      el.querySelector('[data-m=meet]').onclick = function () { close(); MINI.open(); };
       el.querySelector('[data-m=pin]').onclick = function () { close(); pinSheet(); };
       var b1 = el.querySelector('[data-m=mine]'); if (b1) b1.onclick = function () { close(); goMine(); };
       var b2 = el.querySelector('[data-m=team]'); if (b2) b2.onclick = function () { close(); goMyTeam(); };
@@ -1095,6 +1106,9 @@
   }
 
   /* ---------- start ---------- */
+  function home() { if (isGM() || st.view === 'team') goTeam(); else goAgent(st.me.id); }
+  window.APP = {api: api, sheet: sheet, confirmBox: confirmBox, toast: toast, esc: esc, fmtTime: fmtTime, topBar: topBar, showErr: showErr, isGM: isGM, home: home, ERR: ERR, st: st};
+  MINI.init(window.APP);
   var saved = ls('ks_code');
   if (saved) signIn(saved, ls('ks_demo') === '1'); else renderLogin();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
