@@ -229,3 +229,9 @@ table.act tfoot td { font-weight: 700; border-bottom: 0; }
 .mtform label.f { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 14px 0 5px; }
 .mtform input[type=text], .mtform input[type=date], .mtform input[type=time], .mtform textarea, .mtform select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; font-size: 16px; }
 .mtform textarea { resize: vertical; }
+/* team view: the 90 Days Kick Start block and the finished list */
+.ksbox { margin-top: 18px; }
+.acard .gradq { margin-top: 10px; width: 100%; }
+details.finished { margin-top: 14px; }
+details.finished > summary { cursor: pointer; font: 600 13px var(--font); color: var(--muted); text-transform: uppercase; letter-spacing: .08em; padding: 8px 0; }
+details.finished > summary span { margin-left: 6px; }

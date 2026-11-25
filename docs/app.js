@@ -200,7 +200,7 @@
       '<p><b>Your details</b></p>' +
       '<label class="lf">Full name (as the team calls you)</label><input id="jname" value="' + esc(keep.name || '') + '" autocapitalize="words" maxlength="60">' +
       '<label class="lf">Choose a PIN (4–6 digits)</label><input id="jpin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" value="' + esc(keep.pin || '') + '">' +
-      '<label class="lf">I am</label><select id="jkind"><option value="">A new agent: start my 90 Days Kick Start</option><option value="introducer"' + (keep.kind === 'introducer' ? ' selected' : '') + '>A senior agent: I only follow my recruits</option></select>' +
+      '<label class="lf">I am</label><select id="jkind"><option value="">A new agent: start my 90 Days Kick Start</option><option value="introducer"' + (keep.kind === 'introducer' ? ' selected' : '') + '>An existing agent: no 90 days training (meetings + my recruits)</option></select>' +
       '<div id="jstartwrap"' + (keep.kind === 'introducer' ? ' class="hidden"' : '') + '><label class="lf">My start date (day 1)</label><input id="jstart" type="date" value="' + esc(keep.start || KS.todayMYT()) + '"></div>' +
       '<label class="lf">Who introduced me?</label><select id="jintro"><option value="">' + esc(info.leaderName || 'GM') + ' (GM) directly</option>' + opts + '</select>' +
       '<label class="lf">Phone (optional, for WhatsApp)</label><input id="jphone" type="tel" value="' + esc(keep.phone || '') + '" placeholder="e.g. 60123456789">' +
@@ -305,29 +305,35 @@
     var shown = st.showAllAlerts ? al : al.slice(0, 8);
 
     var order = {risk: 0, behind: 1, nostart: 2, ontrack: 3, notyet: 4, complete: 5, graduated: 6, notgrad: 7};
-    var list = trainees.slice().sort(function (a, b) {
+    var sorted = trainees.slice().sort(function (a, b) {
       if (a.active !== b.active) return a.active ? -1 : 1;
       return (order[sums[a.id].health] - order[sums[b.id].health]) || a.name.localeCompare(b.name);
     });
+    // in the 90 Days Kick Start now vs finished (graduated / not graduated / archived)
+    var list = sorted.filter(function (a) { return a.active && !a.grad; });
+    var done = sorted.filter(function (a) { return !a.active || a.grad; }).sort(function (a, b) { return (b.gradDate || '').localeCompare(a.gradDate || '') || a.name.localeCompare(b.name); });
 
     var backMine = !isGM() && st.me && st.me.kind !== 'introducer';
     $app.innerHTML = topBar(isGM() ? 'Team Progress' : 'My recruits', isGM() ? 'REDEFINE Meeting App' : 'Hi ' + (st.me ? st.me.name : ''), backMine ? '<button class="icon" id="back" aria-label="My 90 Days">←</button>' : '', '<button class="icon" id="menu" aria-label="Menu">☰</button>') +
       (backMine ? '<div class="switchbar"><button id="tomine">📘 My 90 Days</button><button class="on">👥 My recruits</button></div>' : '') +
       '<div class="wrap">' + pinNudge() +
-      '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE Meeting App · 90 Days Kick Start</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
+      '<div class="hero"><img src="logo.png" alt="REDEFINE"><div><span>REDEFINE Meeting App</span><b>Hardwork on purpose. No magic, just basic.</b></div></div>' +
       MINI.homeCard() +
+      '<div class="ksbox">' +
+      '<div class="section-title" style="margin-top:0">🎓 90 Days Kick Start <button class="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
       '<div class="stats">' +
         '<div class="stat"><b>' + act.length + '</b><span>In training' + (gradCount ? ' · 🎓 ' + gradCount + ' graduated' : '') + '</span></div>' +
         '<div class="stat"><b>' + avg + '%</b><span>Average progress</span></div>' +
         '<div class="stat"><b style="color:var(--blue)">' + waiting + '</b><span>Waiting your review</span></div>' +
         '<div class="stat"><b style="color:var(--red)">' + over + '</b><span>Overdue items</span></div>' +
       '</div>' +
-            '<div style="margin-top:18px">' + joinBox() + '</div>' +
-      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <button class="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
-      '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">' + (isGM()
+      '<div style="margin-top:12px">' + joinBox() + '</div>' +
+      '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">' + (done.length ? 'Nobody is in the 90 Days Kick Start right now.' : isGM()
         ? 'No agents yet. Tap <b>+ Add agent</b> to start someone\'s 90 days.'
         : 'No recruits yet. Tap <b>+ Add new agent</b> when someone you introduced joins. You and ' + esc((st.data.settings && st.data.settings.leaderName) || 'your GM') + ' will both follow their 90 days here.') + '</div>') + '</div>' +
-      (isGM() && seniors.length ? '<div class="section-title">Introducer accounts <span>' + seniors.length + '</span></div><div class="panel">' + seniors.map(function (x) {
+      (done.length ? '<details class="finished"' + (st.openFinished ? ' open' : '') + '><summary>Finished the 90 days <span>' + done.length + '</span></summary><div class="team">' + done.map(function (a) { return agentCard(a, sums[a.id]); }).join('') + '</div></details>' : '') +
+      '</div>' +
+      (isGM() && seniors.length ? '<div class="section-title">Existing agents <span>' + seniors.length + '</span></div><div class="panel">' + seniors.map(function (x) {
         var n = agents().filter(function (y) { return y.introducer === x.id; }).length;
         if (x.id === ownerIdC()) return '<div class="check" data-senior="' + esc(x.id) + '" style="cursor:pointer"><span style="flex:1"><b>⭐ ' + esc(x.name) + '</b> <span class="note">your GM login (name + PIN)</span></span><span class="note">›</span></div>';
         return '<div class="check" data-senior="' + esc(x.id) + '" style="cursor:pointer"><span style="flex:1"><b>' + esc(x.name) + '</b>' + (x.active ? '' : ' <span class="chip archived">Archived</span>') + '</span><span class="note">' + n + ' direct recruit' + (n === 1 ? '' : 's') + ' ›</span></div>';
@@ -335,6 +341,8 @@
       '</div>';
 
     $app.querySelectorAll('.acard').forEach(function (c) { c.onclick = function () { goAgent(c.dataset.id); }; });
+    $app.querySelectorAll('[data-grad]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); gradSheet(b.dataset.grad); }; });
+    var fin = $app.querySelector('details.finished'); if (fin) fin.ontoggle = function () { st.openFinished = fin.open; };
     $app.querySelectorAll('.alert[data-a]').forEach(function (c) { c.onclick = function () { alertClick(c.dataset.a, c.dataset.i, c.dataset.w, c.dataset.t); }; });
     var more = document.getElementById('more'); if (more) more.onclick = function () { st.showAllAlerts = true; goTeam(); };
     document.getElementById('add').onclick = function () { editAgent(null); };
@@ -375,6 +383,7 @@
        a.active && nt && apptOf(a, nt.wk) ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> · 📅 ' + esc(apptText(apptOf(a, nt.wk))) + ' <span class="chip approved">booked</span></div>' :
        a.active && nt && nt.due ? '<div class="next">Next training: <b>' + wkName(nt.wk) + '</b> by ' + fmt(nt.due) + (nt.daysLeft < 0 ? ' <span class="chip overdue">' + (-nt.daysLeft) + 'd late</span>' : nt.daysLeft <= KS.SOON_DAYS ? ' <span class="chip soon">arrange now</span>' : '') + '</div>' : '') +
       (s.unmatched ? '<div class="note" style="margin-top:6px">' + s.unmatched + ' saved record(s) belong to items no longer in the syllabus (kept, not shown).</div>' : '') +
+      (isGM() && a.active && !a.grad ? '<button class="btn ' + (s.decide ? 'gold' : 'ghost') + ' small gradq" data-grad="' + esc(a.id) + '">🎓 ' + (s.decide ? 'Decide graduation' : 'Graduate / finish') + '</button>' : '') +
       '</div>';
   }
 
@@ -887,7 +896,7 @@
     var html = '<h3>' + (a ? 'Edit ' + esc(a.name) : gm ? 'Add an account' : 'Add your new agent') + '</h3>' +
       (!gm && !a ? '<p class="note">They become your recruit: you and the GM both follow their 90 days.</p>' : '') +
       '<label class="f">Name</label><input type="text" id="e-name" value="' + esc(a ? a.name : '') + '" placeholder="Name as the team calls them">' +
-      (gm ? '<label class="f">Account type</label><select id="e-kind"><option value="">New agent: does the 90 days</option><option value="introducer"' + (a && a.kind === 'introducer' ? ' selected' : '') + '>Introducer only: senior agent, no training board</option></select>' +
+      (gm ? '<label class="f">Account type</label><select id="e-kind"><option value="">New agent: does the 90 days</option><option value="introducer"' + (a && a.kind === 'introducer' ? ' selected' : '') + '>Existing agent: no 90 days training board</option></select>' +
         '<label class="f">Introduced by</label><select id="e-intro"><option value="">Me (GM) directly</option>' + introOpts.map(function (x) { return '<option value="' + esc(x.id) + '"' + (a && a.introducer === x.id ? ' selected' : '') + '>' + esc(x.name) + (x.kind === 'introducer' ? ' (introducer)' : '') + '</option>'; }).join('') + '</select>' : '') +
       '<div id="e-startwrap"' + (a && a.kind === 'introducer' ? ' class="hidden"' : '') + '><label class="f">Start date (day 1 of the 90 days)</label><input type="date" id="e-start" value="' + esc(a ? a.start : today()) + '"></div>' +
       '<label class="f">Email (for reminder emails)</label><input type="email" id="e-email" value="' + esc(a ? a.email : '') + '" placeholder="optional">' +
