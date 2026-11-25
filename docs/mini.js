@@ -95,12 +95,15 @@ var MINI = (function () {
     A.sheet('<h3>🎙 Record a meeting</h3>' +
       '<label class="f">Meeting name</label><input type="text" id="mt-title" maxlength="80" value="' + esc(def) + '">' +
       '<label class="f">Who is in this meeting?</label>' + peoplePicker(me, 'mp') +
+      (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this recording tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
+        '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
       '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone here knows this meeting is being recorded</b> and agrees. The recording is used only to write the minutes, and the audio is deleted 30 days after the minutes are approved.</span></label>' +
       '<p class="note">Only one person records each meeting. Keep this phone near the people talking, with the screen on. Say <b>"mini mini, …"</b> during the meeting to make sure something is noted.</p>' +
       '<div class="actions"><button class="btn red" id="mt-go" style="width:100%" disabled>● Start recording</button></div>', function (el, close) {
       bindPicker(el, 'mp');
-      var ok = el.querySelector('#mt-ok'), go = el.querySelector('#mt-go');
-      ok.onchange = function () { go.disabled = !ok.checked; };
+      var ok = el.querySelector('#mt-ok'), rule = el.querySelector('#mt-rule'), go = el.querySelector('#mt-go');
+      ok.onchange = function () { go.disabled = !ok.checked || (rule && !rule.checked); };
+      if (rule) rule.onchange = ok.onchange;
       go.onclick = async function () { var body = {title: el.querySelector('#mt-title').value.trim(), people: readPicker(el, 'mp'), consent: true}; close(); begin(body); };
     });
   }

@@ -235,3 +235,4 @@ table.act tfoot td { font-weight: 700; border-bottom: 0; }
 details.finished { margin-top: 14px; }
 details.finished > summary { cursor: pointer; font: 600 13px var(--font); color: var(--muted); text-transform: uppercase; letter-spacing: .08em; padding: 8px 0; }
 details.finished > summary span { margin-left: 6px; }
+.mtwarn { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #fdecea; border: 1px solid #f3b8b2; color: #7a1f16; font-size: 13.5px; line-height: 1.45; }
