@@ -277,7 +277,7 @@ var CORE = (function () {
     // introducer: id of the account that brought this agent in ('' = the GM directly)
     // kind: '' = new agent doing the 90 days | 'introducer' = senior account, no training board
     // pin: salted hash of the agent's 4-6 digit PIN ('' = no PIN yet); the PIN itself is never stored
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind', 'pin'],
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind', 'pin', 'calCode'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -377,8 +377,8 @@ var CORE = (function () {
     return a;
   }
   // What an introducer may see about a downline agent: no GM notes.
-  function teamAgent(a) { var o = Object.assign({}, a); delete o.note; delete o.gradNote; o.hasPin = !!o.pin; delete o.pin; return o; }
-  function noPin(a) { var o = Object.assign({}, a); o.hasPin = !!o.pin; delete o.pin; return o; }
+  function teamAgent(a) { var o = Object.assign({}, a); delete o.note; delete o.gradNote; o.hasPin = !!o.pin; delete o.pin; delete o.calCode; return o; }
+  function noPin(a) { var o = Object.assign({}, a); o.hasPin = !!o.pin; delete o.pin; delete o.calCode; return o; }
 
   /* ---------- self sign-up and name + PIN sign-in ---------- */
   function pinHash(store, agentId, pin) { return store.hash('ks-pin|' + agentId + '|' + pin); }
@@ -436,6 +436,7 @@ var CORE = (function () {
     if (q.op === 'signin') return store.withLock(function () { return signinPin(q, store); });
     if (q.op === 'joinInfo') return store.withLock(function () { return joinInfo(q, store); });
     if (q.op === 'signup') return signup(q, store);
+    if (q.op === 'calFeed') return calFeed(q, store);   // REDEFINE Calendar collects with a personal link code
     var me = who(q, store);
     if (q.op === 'login') return me.role === 'leader' ? {role: 'leader'} : {role: 'agent', agent: publicAgent(me.agent)};
     return store.withLock(function () {
@@ -462,6 +463,7 @@ var CORE = (function () {
         return saveAppt(q, store, me, me.name);
       // introducer actions, always limited to their own downline
       case 'team': return team(store, me);
+      case 'calCode': return calCode(q, store, me);
       case 'setPin': return setPin(q, store, me);
       case 'addAgent': return addAgent(q, store, me);
       case 'updateAgent': downlineAgent(store, me, str(q.id, 20)); return updateAgent(q, store, me);
@@ -562,6 +564,7 @@ var CORE = (function () {
       case 'file': return getFile(q, store, null);
       case 'appt': return saveAppt(q, store, findAgent(store.load('agents'), str(q.agentId, 20)), 'Leader');
       case 'graduate': return graduate(q, store);
+      case 'calCode': return calCode(q, store, null);
       case 'setOwner': return setOwner(q, store);
       case 'saveItem': return saveItem(q, store);
       case 'removeItem': return removeItem(q, store, true);
@@ -730,6 +733,45 @@ var CORE = (function () {
     log(store, 'Leader', result === 'yes' ? 'marked graduated' : result === 'no' ? 'marked not graduated' : 'undid graduation decision', a.id, '',
       (date ? date : '') + (a.gradNote ? ' · ' + a.gradNote : '') + (before && !result ? ' (was ' + (before === 'yes' ? 'Graduated' : 'Not graduated') + ')' : ''));
     return {ok: true, agent: cleanAgent(a)};
+  }
+
+  /* ---------- REDEFINE Calendar link ----------
+     Each person gets a private link code (the GM's is kept in settings). REDEFINE Calendar stores it once
+     ("Connect") and then collects that person's appointments every few minutes: the agent's own weekly
+     appointments, plus, for the GM, every agent's, and for an introducer, their direct recruits'. */
+  var CAL_APP_URL = 'https://wkahjian93.github.io/redefine-calendar/';
+  function calCode(q, store, me) {
+    var code = '';
+    if (!me) {
+      var sets = store.load('settings'), r = sets.filter(function (x) { return x.key === 'calCodeGM'; })[0];
+      code = r && !q.reset ? str(r.value) : '';
+      if (!code) { code = 'M' + newId(store, 15); if (r) r.value = code; else sets.push({key: 'calCodeGM', value: code}); store.save('settings', sets); }
+    } else {
+      var rows = store.load('agents'), a = rows.filter(function (x) { return x.id === me.id; })[0];
+      code = a.calCode && !q.reset ? str(a.calCode) : '';
+      if (!code) { code = 'M' + newId(store, 15); a.calCode = code; store.save('agents', rows); }
+    }
+    if (q.reset) log(store, me ? me.name : 'Leader', 'made a new calendar link (old one stops working)', me ? me.id : '', '', '');
+    return {ok: true, code: code, url: CAL_APP_URL + '#/link-meeting?code=' + encodeURIComponent(code)};
+  }
+  function calFeed(q, store) {
+    var code = str(q.code, 40);
+    if (!/^M[A-Z0-9]{15}$/.test(code)) fail('bad_link');
+    var set = settingsObj(store), agents = store.load('agents').map(cleanAgent), byId = {};
+    agents.forEach(function (a) { byId[a.id] = a; });
+    var gm = str(set.calCodeGM) === code, me = gm ? null : agents.filter(function (a) { return a.calCode === code && a.active; })[0];
+    if (!gm && !me) fail('bad_link');
+    var from = KS.addDays(today(store), -14), leaderName = set.leaderName || 'GM';
+    var items = store.load('appts').filter(function (r) {
+      var a = byId[r.agentId];
+      if (!a || !a.active || a.kind === 'introducer' || !KS.validDate(str(r.date)) || str(r.date) < from) return false;
+      return gm || r.agentId === me.id || a.introducer === me.id;
+    }).map(function (r) {
+      var a = byId[r.agentId];
+      return {id: a.id + '-w' + (+r.wk), agent: a.name, mine: !gm && r.agentId === me.id, wk: +r.wk, week: KS.weekLabel(+r.wk, WEEK_NAMES),
+        date: str(r.date), time: str(r.time), note: str(r.note, 200), by: str(r.by, 60), updated: str(r.updated, 40)};
+    });
+    return {ok: true, now: nowIso(store), name: gm ? leaderName : me.name, leader: leaderName, appUrl: str(set.appUrl, 200), items: items};
   }
 
   /* ---------- next appointment per week (leader or the agent) ---------- */

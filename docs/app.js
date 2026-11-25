@@ -316,11 +316,8 @@
         '<div class="stat"><b style="color:var(--blue)">' + waiting + '</b><span>Waiting your review</span></div>' +
         '<div class="stat"><b style="color:var(--red)">' + over + '</b><span>Overdue items</span></div>' +
       '</div>' +
-      '<div class="section-title">Needs you today <span>' + al.length + '</span></div>' +
-      '<div class="alerts">' + (shown.length ? shown.map(alertRow).join('') : '<div class="empty">All clear. Nothing due in the next ' + KS.SOON_DAYS + ' days.</div>') +
-        (al.length > 8 && !st.showAllAlerts ? '<div class="alert" id="more"><div class="txt" style="text-align:center;color:var(--blue)">Show all ' + al.length + '</div></div>' : '') + '</div>' +
-      '<div style="margin-top:18px">' + joinBox() + '</div>' +
-      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <buttonclass="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
+            '<div style="margin-top:18px">' + joinBox() + '</div>' +
+      '<div class="section-title">' + (isGM() ? 'Agents' : 'My recruits') + ' <button class="btn gold small" id="add">+ Add ' + (isGM() ? 'agent' : 'new agent') + '</button></div>' +
       '<div class="team">' + (list.length ? list.map(function (a) { return agentCard(a, sums[a.id]); }).join('') : '<div class="panel empty">' + (isGM()
         ? 'No agents yet. Tap <b>+ Add agent</b> to start someone\'s 90 days.'
         : 'No recruits yet. Tap <b>+ Add new agent</b> when someone you introduced joins. You and ' + esc((st.data.settings && st.data.settings.leaderName) || 'your GM') + ' will both follow their 90 days here.') + '</div>') + '</div>' +
@@ -379,13 +376,14 @@
       '<button class="btn ghost" data-m="refresh">↻ Refresh</button>' +
       '<button class="btn ghost" data-m="remind">✉ Email reminders</button>' +
       '<button class="btn ghost" data-m="history">🕘 History</button>' +
+      '<button class="btn ghost" data-m="cal">📅 Connect my REDEFINE Calendar</button>' +
       '<button class="btn ghost" data-m="settings">⚙ Settings</button>' +
       '<button class="btn ghost" data-m="syllabus">📘 Edit syllabus</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelectorAll('[data-m]').forEach(function (b) {
         b.onclick = function () {
           close();
-          ({refresh: refresh, remind: reminders, history: goHistory, settings: settings, syllabus: syllabusEditor, out: signOut})[b.dataset.m]();
+          ({refresh: refresh, remind: reminders, history: goHistory, cal: calSheet, settings: settings, syllabus: syllabusEditor, out: signOut})[b.dataset.m]();
         };
       });
     });
@@ -559,16 +557,11 @@
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label class="f">Date</label><input type="date" id="ap-date" value="' + esc(dflt) + '"></div>' +
       '<div><label class="f">Time (optional)</label><input type="time" id="ap-time" value="' + esc(ap ? ap.time : '') + '"></div></div>' +
       '<label class="f">Note (optional)</label><input type="text" id="ap-note" maxlength="200" value="' + esc(ap ? ap.note : '') + '" placeholder="e.g. SG FARLIM, bring your prospect list">' +
-      '<div class="actions"><div class="btn-row"><button class="btn ghost" id="ap-save">Save</button>' +
-      '<a class="btn gold" id="ap-cal" target="_blank" rel="noopener">📆 Save + open REDEFINE Calendar</a></div>' +
+      '<div class="actions"><button class="btn gold" id="ap-save" style="width:100%">Save</button>' +
       (ap ? '<button class="btn ghost small" id="ap-clear" style="margin-top:8px;width:100%;color:var(--red)">Clear appointment…</button>' : '') +
-      '<p class="note" style="margin:8px 0 0">REDEFINE Calendar opens with the event filled in. Check it and tap <b>Add</b> there to save it. You need to be signed in to REDEFINE Calendar on this phone.</p></div>',
+      '<p class="note" style="margin:8px 0 0">📅 It goes into REDEFINE Calendar by itself for the agent, their introducer and the GM, for everyone who has connected once (☰ Menu → Connect my REDEFINE Calendar).</p></div>',
       function (el, close) {
         var v = function (k) { return el.querySelector('#ap-' + k).value.trim(); };
-        var cal = el.querySelector('#ap-cal');
-        function sync() { cal.href = calendarLink(a, w, v('date'), v('time'), v('note')); }
-        ['date', 'time', 'note'].forEach(function (k) { el.querySelector('#ap-' + k).addEventListener('input', sync); });
-        sync();
         function valid() {
           if (!KS.validDate(v('date'))) { toast('Choose a date.', true); return false; }
           if (v('date') < today() && !(ap && ap.date === v('date'))) { toast('That date has already passed. Pick today or later.', true); return false; }
@@ -583,15 +576,9 @@
             'appt', {agentId: a.id, wk: w, date: row.date, time: row.time, note: row.note}, msg);
         }
         el.querySelector('#ap-save').onclick = function () { if (!valid()) return; close(); save('Appointment saved'); };
-        // The calendar tab must open inside the tap itself (phones block it after a wait), so the save runs alongside.
-        cal.onclick = function (ev) {
-          if (!valid()) { ev.preventDefault(); return; }
-          sync();
-          setTimeout(function () { close(); save('Appointment saved. Finish adding it in REDEFINE Calendar.'); }, 0);   // let the link open first
-        };
         var clr = el.querySelector('#ap-clear');
         if (clr) clr.onclick = async function () {
-          if (!(await confirmBox('Clear this appointment?', esc(wkName(w)) + ': ' + esc(apptText(ap)) + '. Anything already in REDEFINE Calendar stays there; delete it in the calendar if needed.', 'Clear', true))) return;
+          if (!(await confirmBox('Clear this appointment?', esc(wkName(w)) + ': ' + esc(apptText(ap)) + '. It is also taken off connected REDEFINE Calendars.', 'Clear', true))) return;
           close();
           instant(function () { st.data.appts = others(); }, 'appt', {agentId: a.id, wk: w, clear: true}, 'Appointment cleared');
         };
@@ -616,6 +603,7 @@
       (st.view === 'team' ? (st.me && st.me.kind !== 'introducer' ? '<button class="btn ghost" data-m="mine">📘 My 90 Days</button>' : '') : '<button class="btn ghost" data-m="team">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button>') +
       (st.view === 'team' ? '<button class="btn ghost" data-m="history">🕘 History of my recruits</button>' : '') +
       '<button class="btn ghost" data-m="pin">🔑 ' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</button>' +
+      '<button class="btn ghost" data-m="cal">📅 Connect my REDEFINE Calendar</button>' +
       '<button class="btn ghost" data-m="install">📲 Add to home screen</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelector('[data-m=refresh]').onclick = function () { close(); refresh(); };
@@ -625,6 +613,24 @@
       var b3 = el.querySelector('[data-m=history]'); if (b3) b3.onclick = function () { close(); goHistory(); };
       el.querySelector('[data-m=out]').onclick = function () { close(); signOut(); };
       el.querySelector('[data-m=install]').onclick = function () { close(); installHelp(); };
+      el.querySelector('[data-m=cal]').onclick = function () { close(); calSheet(); };
+    });
+  }
+  /* connect REDEFINE Calendar: weekly appointments then appear there by themselves */
+  async function calSheet(reset) {
+    var r;
+    try { r = await api('calCode', reset ? {reset: true} : {}); } catch (e) { toast(ERR[e.code] || 'Could not get your calendar link.'); return; }
+    var who = isGM() ? 'every agent\'s weekly appointments' : (st.me && st.me.kind === 'introducer' ? 'your recruits\' weekly appointments' : 'your weekly appointments' + (st.teamSize ? ' and your recruits\'' : ''));
+    sheet('<h3>📅 Connect REDEFINE Calendar</h3>' +
+      '<p class="note">Do this once. After that, ' + who + ' show up in your REDEFINE Calendar by themselves as 👥 Meeting / training, and change or disappear when the appointment changes. They do not count in A/O/P.</p>' +
+      (st.demo ? '<p class="note"><b>Sample mode:</b> this link is made up and will not connect.</p>' : '') +
+      '<a class="btn gold" style="display:block;text-align:center;margin-top:12px;text-decoration:none" target="_blank" rel="noopener" href="' + esc(r.url) + '">Open REDEFINE Calendar and connect</a>' +
+      '<p class="note" style="margin-top:10px">Sign in to the calendar if it asks; it connects right after. Appointments arrive within 5 minutes, or straight away when you open the calendar.</p>' +
+      '<button class="btn ghost" id="cal-new" style="margin-top:8px">Stop the old link and make a new one</button>', function (el, close) {
+      el.querySelector('#cal-new').onclick = async function () {
+        close();
+        if (await confirmBox('Make a new calendar link?', 'Your old link stops working, and the calendar it was connected to stops getting appointments until you connect again.', 'Make new link', true)) calSheet(true);
+      };
     });
   }
   /* the GM's own account becomes the GM login (name + 6-digit PIN) */

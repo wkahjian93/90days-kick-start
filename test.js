@@ -391,6 +391,41 @@ ok('the owner account signs in with name + 6-digit PIN as GM; picking the owner 
   failsN = 0;
 });
 
+ok('REDEFINE Calendar link: each person gets a private code; the feed gives the right appointments to the right people', () => {
+  failsN = 0;
+  const sen = call({op: 'addAgent', code: L, name: 'Cal Introducer', kind: 'introducer'}).agent;
+  const t1 = call({op: 'addAgent', code: sen.code, name: 'Cal Trainee', start: '2026-11-01'}).agent;
+  const t2 = call({op: 'addAgent', code: L, name: 'Cal Other', start: '2026-11-01'}).agent;
+  call({op: 'appt', code: t1.code, wk: 1, date: '2026-11-06', time: '20:00', note: 'SG FARLIM'});
+  call({op: 'appt', code: L, agentId: t2.id, wk: 1, date: '2026-11-07'});
+  call({op: 'appt', code: L, agentId: t2.id, wk: 0, date: '2026-10-01'});   // more than 14 days ago: left out
+  const gm = call({op: 'calCode', code: L}), c1 = call({op: 'calCode', code: t1.code}), cs = call({op: 'calCode', code: sen.code});
+  assert.ok(/^M[A-Z0-9]{15}$/.test(gm.code) && gm.url.includes('#/link-meeting?code=' + gm.code));
+  assert.equal(call({op: 'calCode', code: L}).code, gm.code);                // same code each time
+  assert.ok(gm.code !== c1.code && c1.code !== cs.code);
+  const feed = c => call({op: 'calFeed', code: c}).items.map(i => i.agent + ':' + i.wk + (i.mine ? ':mine' : '')).sort();
+  assert.ok(feed(gm.code).includes('Cal Trainee:1') && feed(gm.code).includes('Cal Other:1') && !feed(gm.code).includes('Cal Other:0'));
+  assert.deepEqual(feed(c1.code), ['Cal Trainee:1:mine']);                     // the agent: only their own
+  assert.deepEqual(feed(cs.code), ['Cal Trainee:1']);                          // the introducer: their recruit's
+  const it = call({op: 'calFeed', code: c1.code}).items[0];
+  assert.equal(it.date + ' ' + it.time + ' ' + it.note, '2026-11-06 20:00 SG FARLIM');
+  // codes never leak into board or team data
+  assert.ok(!JSON.stringify(call({op: 'board', code: L}).agents).includes(c1.code));
+  assert.ok(!JSON.stringify(call({op: 'team', code: sen.code})).includes(c1.code));
+  // a cleared appointment disappears from the feed; a new link stops the old one
+  call({op: 'appt', code: t1.code, wk: 1, clear: true});
+  assert.deepEqual(feed(c1.code), []);
+  const c1b = call({op: 'calCode', code: t1.code, reset: true});
+  assert.ok(c1b.code !== c1.code);
+  err({op: 'calFeed', code: c1.code}, 'bad_link');
+  err({op: 'calFeed', code: 'nonsense'}, 'bad_link');
+  // archived agents' links stop
+  const c2 = call({op: 'calCode', code: t2.code}).code;
+  call({op: 'updateAgent', code: L, id: t2.id, active: false});
+  err({op: 'calFeed', code: c2}, 'bad_link');
+  failsN = 0;
+});
+
 ok('locks out after 20 wrong codes', () => {
   failsN = 20; err({op: 'login', code: L}, 'locked'); failsN = 0;
 });
