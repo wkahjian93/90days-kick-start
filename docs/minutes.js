@@ -22,6 +22,13 @@ var MINUTES = (function () {
 
   var C;   // core helpers, set by attach()
   function fail(code) { var e = new Error(code); e.appCode = code; throw e; }
+  /* The GM's own word list (Settings): names, products and team phrases the AI should spell right. Up to 30, 40 characters each. */
+  function wordList(v) {
+    var seen = {}, out = [];
+    String(v == null ? '' : v).split(/[,，、;；\n\r]+/).forEach(function (w) { w = w.replace(/\s+/g, ' ').trim().slice(0, 40); var k = w.toLowerCase(); if (w && !seen[k]) { seen[k] = 1; out.push(w); } });
+    return out.slice(0, 30);
+  }
+  function uniq(a) { var seen = {}; return a.filter(function (w) { var k = String(w).toLowerCase(); if (!w || seen[k]) return false; seen[k] = 1; return true; }); }
   function str(v, max) { v = v == null ? '' : String(v).trim(); return max ? v.slice(0, max) : v; }
   function arr(v) { return Array.isArray(v) ? v : []; }
   function parseObj(s) { if (s && typeof s === 'object') return s; try { var o = JSON.parse(s || 'null'); return o && typeof o === 'object' ? o : null; } catch (e) { return null; } }
@@ -107,14 +114,17 @@ var MINUTES = (function () {
   function transcribeOne(store, m, p) {
     var f = store.getFile(p.fileId);
     if (!f || !f.b64) throw new Error(f && f.tooBig ? 'audio part too big' : 'audio part missing');
-    var names = arr(m.people).map(function (x) { return x.name; });
+    var names = arr(m.people).map(function (x) { return x.name; }), words = wordList(C.settingsObj(store).words);
+    var others = store.load('agents').filter(function (a) { return a.active !== false && a.active !== 'false'; }).map(function (a) { return a.name; });
+    // the GM's words first, then who is in the meeting, the built-in terms, and the rest of the team while there is room
     var r = store.transcribe({b64: f.b64, mime: p.mime, name: 'part' + (+p.n + 1) + '.' + (/mp4|m4a|aac/.test(p.mime) ? 'm4a' : 'webm'),
-      keywords: KEYWORDS.concat(names).slice(0, 60),
-      prompt: '马来西亚保险团队的会议/培训，华语为主，夹杂英语和马来语。Malaysian insurance agency meeting, mostly Mandarin with English and Malay.' + (names.length ? ' People: ' + names.join(', ') + '.' : '')});
+      keywords: uniq(words.concat(names, KEYWORDS, others)).slice(0, 60),
+      prompt: '马来西亚保险团队的会议/培训，华语为主，夹杂英语和马来语。Malaysian insurance agency meeting, mostly Mandarin with English and Malay.' + (names.length ? ' People: ' + names.join(', ') + '.' : '') + (words.length ? ' Team words: ' + words.join(', ') + '.' : '')});
     return str(r && r.text);
   }
 
   function rules(store, names, merging) {
+    var teamWords = wordList(C.settingsObj(store).words);
     return '你是 "mini mini"，REDEFINE 保险团队的会议记录助手。' + (merging ? '下面是同一个会议分段写好的会议记录（JSON），请合并成一份完整的会议记录：去掉重复，保留所有任务和决定。' : '根据下面的会议逐字稿写会议记录。') + '\n' +
       '规则：\n' +
       '- 用会议的主要语言写（华语为主就用简体中文；英语为主就用英文；马来语为主就用马来文）。ANP、MAE、prospect 等常用英文词可保留英文。\n' +
@@ -124,6 +134,7 @@ var MINUTES = (function () {
       '- 有人说 “mini mini …”（也可能被听写成 迷你迷你、mini-mini、咪你咪你）就是叫助手记下某事：把那件事写进 mini_mini_notes。逐字稿里 [📌] 表示记录的人按了“标记”，附近的内容要特别留意。\n' +
       '- 如果提到下一次开会/培训的时间，填 next_meeting（date 用 YYYY-MM-DD，time 用 24 小时 HH:MM；只说“下个星期一”就按今天推算；不确定就留空并在 note 说明）。今天日期：' + C.today(store) + '（马来西亚时间）。\n' +
       '与会者名单：' + (names.length ? names.join(', ') : '（没有提供）') + '\n' +
+      (teamWords.length ? '团队常用的名字和词（逐字稿里听起来像这些的，用这里的写法；没提到就不要加）：' + teamWords.join(', ') + '\n' : '') +
       '只输出 JSON，格式：\n' +
       '{"title":"","language":"zh|en|ms","summary":["要点…"],"decisions":["…"],"people":[{"name":"","tasks":[{"what":"","due":""}],"homework":[{"what":"","due":""}],"leader_comments":[""]}],"mini_mini_notes":[""],"next_meeting":{"date":"","time":"","note":""},"who_is_unclear":[""]}';
   }
@@ -453,7 +464,7 @@ var MINUTES = (function () {
     },
     JSON_COLS: {people: 1, marks: 1},
     OPS: OPS, attach: function (core) { C = core; }, handle: handle, timer: timer, calItems: calItems,
-    cleanSummary: cleanSummary, transcriptOf: transcriptOf, rules: rules
+    cleanSummary: cleanSummary, wordList: wordList, transcriptOf: transcriptOf, rules: rules
   };
 })();
 

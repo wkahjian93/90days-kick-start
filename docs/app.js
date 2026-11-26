@@ -1001,12 +1001,14 @@
       '<label class="f">App link (used in invites and emails)</label><input type="text" id="s-url" value="' + esc(s.appUrl || location.href.split('?')[0].split('#')[0]) + '">' +
       '<label class="f">Team code for self sign-up</label><input type="text" id="s-team" value="' + esc(s.teamCode || '') + '" autocapitalize="none" spellcheck="false" placeholder="e.g. Redefine2026 (6+ letters/numbers)">' +
       '<div class="note">Agents use it once to create their own account (name + PIN). Share it in your team WhatsApp group. Leave empty to turn self sign-up off; change it if it leaks.</div>' +
+      '<label class="f">Team words for mini mini (helps it hear names and terms right)</label><textarea id="s-words" rows="3" spellcheck="false" style="min-height:76px" placeholder="e.g. Isabel, Jun Hui, 三访, 定联, 陪访">' + esc(s.words || '') + '</textarea>' +
+      '<div class="note">Names, plan names and your own phrases, separated by commas. Up to 30. Agents’ names are added by themselves, so list only what mini mini keeps getting wrong. Used for meetings recorded from now on.</div>' +
       '<div class="switch"><div><b>Daily 8am email reminders</b><div class="note">One digest to you, and one to each agent who has something due, overdue or to redo.</div></div><input type="checkbox" id="s-alerts" style="width:24px;height:24px"' + (s.emailAlerts === 'on' ? ' checked' : '') + '></div>' +
       '<div class="actions"><button class="btn gold" id="s-save" style="width:100%">Save settings</button></div>', function (el, close) {
       el.querySelector('#s-save').onclick = async function () {
         var on = el.querySelector('#s-alerts').checked ? 'on' : 'off';
         if (on === 'on' && s.emailAlerts !== 'on' && !(await confirmBox('Turn on daily emails?', 'Every morning at 8am the app will email you and each agent who has something due. You can preview them any time under Email reminders.', 'Turn on'))) return;
-        try { await api('settings', {leaderName: el.querySelector('#s-name').value, leaderEmail: el.querySelector('#s-email').value, appUrl: el.querySelector('#s-url').value, teamCode: el.querySelector('#s-team').value.trim(), emailAlerts: on}); close(); toast('Settings saved'); refresh(); }
+        try { await api('settings', {leaderName: el.querySelector('#s-name').value, leaderEmail: el.querySelector('#s-email').value, appUrl: el.querySelector('#s-url').value, teamCode: el.querySelector('#s-team').value.trim(), words: el.querySelector('#s-words').value, emailAlerts: on}); close(); toast('Settings saved'); refresh(); }
         catch (e) { showErr(e); }
       };
     });

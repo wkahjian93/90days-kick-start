@@ -189,4 +189,22 @@ ok('the existing board is untouched by the new tables', () => {
   assert(CORE.TABLES.meetings && CORE.TABLES.mtasks && CORE.JSON_COLS.people);
 });
 
+ok('team words: the GM\'s list is tidied, sent to the speech-to-text and the summary, ahead of other names', () => {
+  call({op: 'settings', code: L, words: ' 三访，定联\nIsabel, isabel ;; Jun Hui、陪访 '});
+  assert.equal(db.settings.find(r => r.key === 'words').value, '三访, 定联, Isabel, Jun Hui, 陪访');
+  assert.equal(MINUTES.wordList(Array.from({length: 50}, (_, i) => 'w' + i).join(',')).length, 30);
+  const old = store.transcribe; let sent = null; store.transcribe = o => { sent = o; return {text: '好。'}; };
+  const m2 = call({op: 'mtStart', code: L, title: 'Words', consent: true, people: [{id: ml.id}], different: true}).meeting;
+  call({op: 'mtPart', code: L, id: m2.id, n: 0, mime: 'audio/mp4', secs: 60, b64: B64});
+  call({op: 'mtFinish', code: L, id: m2.id, parts: 1, secs: 60});
+  call({op: 'mtProcess', code: L, id: m2.id});
+  store.transcribe = old;
+  assert.deepEqual(sent.keywords.slice(0, 6), ['三访', '定联', 'Isabel', 'Jun Hui', '陪访', 'Mei Ling']);
+  assert(sent.keywords.includes('REDEFINE') && sent.keywords.includes('Other Person') && sent.keywords.length <= 60);
+  assert(/Team words: 三访, 定联, Isabel/.test(sent.prompt));
+  assert(/团队常用的名字和词.*三访, 定联, Isabel, Jun Hui, 陪访/.test(lastChat.system));
+  call({op: 'settings', code: L, words: ''});
+  assert.equal(MINUTES.rules(store, [], false).includes('团队常用'), false);
+});
+
 console.log('\nAll ' + pass + ' mini mini checks passed.');

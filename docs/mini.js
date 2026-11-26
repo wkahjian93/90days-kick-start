@@ -2,6 +2,10 @@
    Uses the app's helpers through window.APP (set in app.js). Server rules are in minutes.js. */
 var MINI = (function () {
   var A;                                   // app bridge
+  /* Meeting-room sound: the phone's "call" filter (echo cancel + noise suppression) is tuned for one person close to the phone
+     and cuts quieter voices across the table, so it is off; auto volume stays on. 64 kbps keeps speech clear for the AI. */
+  var MIC_ASK = {audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1}};
+  var REC_BITS = 64000;
   var PART_SECS = 300;                     // a new audio part every 5 minutes, sent while recording continues
   var MAX_SECS = 4 * 3600;                 // stops by itself at 4 hours
   var LS_REC = 'mm_rec';                   // the recording in progress (survives the app closing)
@@ -109,7 +113,7 @@ var MINI = (function () {
   }
   async function begin(body) {
     var stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}}); }
+    try { stream = await navigator.mediaDevices.getUserMedia(MIC_ASK); }
     catch (e) { A.toast('No microphone access. Allow the microphone for this app in the phone\'s settings, then try again.', true); return; }
     var r;
     try { r = await A.api('mtStart', body); } catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); A.showErr(e); return; }
@@ -141,7 +145,7 @@ var MINI = (function () {
   function updRec(patch) { var r = lsGet(LS_REC); if (r) lsSet(LS_REC, Object.assign(r, patch)); }
   // Every 10 seconds the part so far is kept on the phone, so closing the app loses at most 10 seconds.
   function newPart() {
-    var opts = {audioBitsPerSecond: 32000}; if (REC.mime) opts.mimeType = REC.mime;
+    var opts = {audioBitsPerSecond: REC_BITS}; if (REC.mime) opts.mimeType = REC.mime;
     var mr = new MediaRecorder(REC.stream, opts), chunks = [], n = REC.n, id = REC.id, started = Date.now(), marks = REC.marks = [];
     var mime = (REC.mime || 'audio/webm').split(';')[0];
     function save(ready) {
@@ -211,7 +215,7 @@ var MINI = (function () {
     if (!REC || !REC.paused) return;
     if (!micLive()) {
       try { REC.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-      try { REC.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}}); }
+      try { REC.stream = await navigator.mediaDevices.getUserMedia(MIC_ASK); }
       catch (e) { if (byTap) A.toast('No microphone. Allow the microphone for this app, then tap Continue recording.', true); recScreen(); return; }
     }
     if (!REC || !REC.paused) return;
@@ -284,7 +288,7 @@ var MINI = (function () {
     var secs = r.secs + (last ? last.secs : 0);
     var go = await A.confirmBox('Recording was interrupted', 'The app closed while recording "' + esc(r.title) + '" (about ' + mmss(secs) + ' kept). Carry on recording the same meeting?<br><br>Tap <b>Cancel</b> to stop here: mini mini then writes the minutes from what was kept.', 'Carry on recording');
     if (go) {
-      try { var stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}}); updRec({n: r.n + 1, secs: secs}); record(stream, r.id, r.title, r.n + 1, secs); return; }
+      try { var stream = await navigator.mediaDevices.getUserMedia(MIC_ASK); updRec({n: r.n + 1, secs: secs}); record(stream, r.id, r.title, r.n + 1, secs); return; }
       catch (e) { A.toast('No microphone access.', true); }
     }
     lsSet(LS_REC, Object.assign(r, {stopped: true, n: made.length, secs: secs}));

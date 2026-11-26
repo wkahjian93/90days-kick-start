@@ -420,13 +420,14 @@ var CORE = (function () {
   }
 
   function saveSettings(q, store) {
-    var rows = store.load('settings'), allowed = {leaderName: 60, leaderEmail: 120, emailAlerts: 3, appUrl: 200, teamCode: 40};
+    var rows = store.load('settings'), allowed = {leaderName: 60, leaderEmail: 120, emailAlerts: 3, appUrl: 200, teamCode: 40, words: 1500};
     Object.keys(allowed).forEach(function (k) {
       if (q[k] == null) return;
       var v = str(q[k], allowed[k]);
       if (k === 'emailAlerts' && v !== 'on' && v !== 'off') fail('invalid_request');
       if (k === 'leaderEmail' && v && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) fail('bad_email');
       if (k === 'teamCode' && v && (v.length < 6 || /\s/.test(v))) fail('team_code_short');
+      if (k === 'words') v = minutesMod ? minutesMod.wordList(v).join(', ') : v;   // tidy: one clean list, no repeats
       var r = rows.filter(function (x) { return x.key === k; })[0];
       if (r) r.value = v; else rows.push({key: k, value: v});
     });
