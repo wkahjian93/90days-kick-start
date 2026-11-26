@@ -159,9 +159,12 @@ var MINI = (function () {
     mr.start(10000);
     REC.mr = mr; REC.partStart = started;
   }
-  function elapsed() { return REC ? REC.before + Math.floor((Date.now() - REC.partStart) / 1000) : 0; }
+  function elapsed() { return REC ? REC.before + (REC.paused ? 0 : Math.floor((Date.now() - REC.partStart) / 1000)) : 0; }
+  function micLive() { return REC && REC.stream && REC.stream.getAudioTracks().some(function (t) { return t.readyState === 'live'; }); }
   function tickRec() {
     if (!REC) return;
+    if (REC.paused) { paintRec(); return; }
+    if (!micLive()) { pauseRec('mic'); return; }   // the phone took the microphone away (lock, call, another app)
     var inPart = (Date.now() - REC.partStart) / 1000;
     if (elapsed() >= MAX_SECS) { stopRec(true); return; }
     if (inPart >= PART_SECS) {   // send this part, carry on in a new one
@@ -171,23 +174,71 @@ var MINI = (function () {
     }
     paintRec();
   }
-  async function wakeOn() { try { if (navigator.wakeLock && REC) REC.wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  // Keep the screen on: the Wake Lock (newer phones) plus a tiny silent looping video (works on iPhones where the Wake Lock does not).
+  var noSleep = null;
+  async function wakeOn() {
+    try { if (navigator.wakeLock && REC && (!REC.wake || REC.wake.released)) REC.wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try {
+      if (!window.NOSLEEP_MEDIA) return;
+      if (!noSleep) {
+        noSleep = document.createElement('video');
+        noSleep.setAttribute('playsinline', ''); noSleep.setAttribute('muted', ''); noSleep.muted = true; noSleep.setAttribute('loop', ''); noSleep.setAttribute('title', 'mini mini keeps the screen on');
+        noSleep.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:0;top:0';
+        var s1 = document.createElement('source'); s1.src = NOSLEEP_MEDIA.webm; s1.type = 'video/webm';
+        var s2 = document.createElement('source'); s2.src = NOSLEEP_MEDIA.mp4; s2.type = 'video/mp4';
+        noSleep.appendChild(s1); noSleep.appendChild(s2); document.body.appendChild(noSleep);
+      }
+      await noSleep.play();
+    } catch (e) {}
+  }
+  function wakeOff() {
+    try { if (REC && REC.wake) REC.wake.release(); } catch (e) {}
+    try { if (noSleep) { noSleep.pause(); noSleep.remove(); noSleep = null; } } catch (e) {}
+  }
+  // The phone was locked or the app was left: close this part properly (so its audio file is complete), wait, then carry on.
+  function pauseRec(why) {
+    if (!REC || REC.paused) return;
+    var inPart = Math.round((Date.now() - REC.partStart) / 1000), old = REC.mr;
+    REC.paused = Date.now(); REC.mr = null; REC.before += inPart;
+    REC.n++;   // the next part gets a new number (numbers may skip; the server counts parts)
+    updRec({n: REC.n, secs: REC.before});
+    try { old.stop(); } catch (e) {}
+    REC.gaps = (REC.gaps || 0) + 1;
+    if (why === 'mic' && document.visibilityState === 'visible') resumeRec();
+    else paintRec();
+  }
+  async function resumeRec(byTap) {
+    if (!REC || !REC.paused) return;
+    if (!micLive()) {
+      try { REC.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      try { REC.stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}}); }
+      catch (e) { if (byTap) A.toast('No microphone. Allow the microphone for this app, then tap Continue recording.', true); recScreen(); return; }
+    }
+    if (!REC || !REC.paused) return;
+    var lost = Math.round((Date.now() - REC.paused) / 1000);
+    REC.paused = 0; newPart(); wakeOn(); recScreen();
+    if (lost >= 3) A.toast('▶ Recording again. ' + mmss(lost) + ' was not recorded while the phone was locked.', true);
+  }
   function onVis() {
     if (!REC) return;
-    if (document.visibilityState === 'visible') { wakeOn(); if (REC.hidden && Date.now() - REC.hidden > 3000) A.toast('Welcome back. If the phone was locked, some of the meeting may not have been recorded. Keep this screen open.', true); REC.hidden = 0; }
-    else REC.hidden = Date.now();
+    if (document.visibilityState === 'visible') { wakeOn(); if (REC.paused) resumeRec(); }
+    else pauseRec('hidden');
   }
   function onLeave(e) { if (REC) { e.preventDefault(); e.returnValue = ''; } }
-  function mark() { if (!REC) return; REC.marks.push(Math.floor((Date.now() - REC.partStart) / 1000)); A.toast('📌 Marked at ' + mmss(elapsed())); paintRec(); }
+  function mark() { if (!REC || REC.paused) return; REC.marks.push(Math.floor((Date.now() - REC.partStart) / 1000)); A.toast('📌 Marked at ' + mmss(elapsed())); paintRec(); }
 
   function recScreen() {
     A.st.screen = 'rec';
-    document.getElementById('app').innerHTML = A.topBar('Recording', 'mini mini', '', '') +
-      '<div class="wrap"><div class="recbox"><div class="recdot"></div><div class="rectime" id="rec-time">0:00</div><div class="rectitle">' + esc(REC.title) + '</div>' +
+    var paused = !!REC.paused;
+    document.getElementById('app').innerHTML = A.topBar(paused ? 'Paused' : 'Recording', 'mini mini', '', '') +
+      '<div class="wrap"><div class="recbox' + (paused ? ' paused' : '') + '"><div class="recdot"></div><div class="rectime" id="rec-time">0:00</div><div class="rectitle">' + esc(REC.title) + '</div>' +
       '<div class="note" id="rec-sent"></div></div>' +
-      '<div class="btn-row" style="margin-top:14px"><button class="btn ghost" id="rec-mark" style="min-height:64px;font-size:18px">📌 Mark this</button><button class="btn red" id="rec-stop" style="min-height:64px;font-size:18px">■ Stop</button></div>' +
-      '<div class="panel note" style="margin-top:14px">Keep this screen open and the phone unlocked. Recording stops by itself at 4 hours.<br>Say <b>"mini mini, …"</b> or tap <b>📌 Mark this</b> when something must go into the minutes.</div></div>';
-    document.getElementById('rec-mark').onclick = mark;
+      (paused ? '<div class="mtwarn" style="margin-top:14px">⏸ <b>Recording paused.</b> The phone was locked or the app was left, so the microphone stopped. Everything before this is kept.</div>' +
+        '<div class="btn-row" style="margin-top:14px"><button class="btn gold" id="rec-go" style="min-height:64px;font-size:18px">▶ Continue recording</button><button class="btn red" id="rec-stop" style="min-height:64px;font-size:18px">■ Stop</button></div>'
+      : '<div class="btn-row" style="margin-top:14px"><button class="btn ghost" id="rec-mark" style="min-height:64px;font-size:18px">📌 Mark this</button><button class="btn red" id="rec-stop" style="min-height:64px;font-size:18px">■ Stop</button></div>') +
+      '<div class="panel note" style="margin-top:14px"><b>Don\'t press the lock button</b> and stay in this app: the phone cannot record while it is locked. mini mini keeps the screen from locking by itself. If it does lock, unlock it and recording carries on.<br>Recording stops by itself at 4 hours. Say <b>"mini mini, …"</b> or tap <b>📌 Mark this</b> when something must go into the minutes.</div></div>';
+    var mk = document.getElementById('rec-mark'); if (mk) mk.onclick = mark;
+    var gb = document.getElementById('rec-go'); if (gb) gb.onclick = function () { resumeRec(true); };
     document.getElementById('rec-stop').onclick = async function () { if (await A.confirmBox('Stop recording?', 'mini mini then writes the minutes. You can\'t add more to this recording afterwards.', 'Stop and write minutes')) stopRec(false); };
     paintRec();
   }
@@ -199,12 +250,12 @@ var MINI = (function () {
   }
   async function stopRec(auto) {
     if (!REC) return;
-    var r = REC, total = elapsed(), inPart = (Date.now() - r.partStart) / 1000, made = (lsGet(LS_REC) || {}).made || [];
-    var parts = made.length + (made.indexOf(r.n) < 0 && inPart >= 1 ? 1 : 0); REC = null;
+    var r = REC, total = elapsed(), inPart = r.paused ? 0 : (Date.now() - r.partStart) / 1000, made = (lsGet(LS_REC) || {}).made || [];
+    var parts = made.length + (!r.paused && made.indexOf(r.n) < 0 && inPart >= 1 ? 1 : 0);
+    wakeOff(); REC = null;
     clearInterval(r.timer);
-    try { r.mr.stop(); } catch (e) {}
+    try { if (r.mr) r.mr.stop(); } catch (e) {}
     setTimeout(function () { r.stream.getTracks().forEach(function (t) { t.stop(); }); }, 500);
-    try { if (r.wake) r.wake.release(); } catch (e) {}
     document.removeEventListener('visibilitychange', onVis); window.removeEventListener('beforeunload', onLeave);
     lsSet(LS_REC, {id: r.id, title: r.title, n: parts, secs: total, stopped: true});
     if (auto) A.toast('4 hours reached: recording stopped.');
