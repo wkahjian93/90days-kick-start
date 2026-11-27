@@ -43,7 +43,7 @@ var MINI = (function () {
   function b64(blob) {
     return new Promise(function (res, rej) { var r = new FileReader(); r.onload = function () { res(String(r.result).split(',')[1] || ''); }; r.onerror = function () { rej(r.error); }; r.readAsDataURL(blob); });
   }
-  var sending = false, sendWait = 5000;
+  var sending = false, sendWait = 5000, limitShown = {};
   async function pump() {
     if (sending) return; sending = true;
     try {
@@ -57,6 +57,8 @@ var MINI = (function () {
           await delPart(p.k); sendWait = 5000;
         } catch (e) {
           if (e.code === 'meeting_closed' || e.code === 'forbidden' || e.code === 'not_found' || e.code === 'file_type') { await delPart(p.k); continue; }
+          // the team's daily AI minutes are used up: drop this part, stop the recording, say so once
+          if (e.code === 'minutes_limit') { await delPart(p.k); if (!limitShown[p.id]) { limitShown[p.id] = 1; A.showErr(e); } if (REC && REC.id === p.id) stopRec(); continue; }
           await new Promise(function (r) { setTimeout(r, sendWait); }); sendWait = Math.min(sendWait * 2, 60000);
         }
         paintRec();
@@ -484,12 +486,19 @@ var MINI = (function () {
     bindTicks(document.getElementById('app'));
     paintRec();
   }
+  // today's AI minutes for the whole team (the daily cap keeps the OpenAI cost under control)
+  function usageHtml(r) {
+    var u = r && r.usage; if (!u || !u.capMin) return '';
+    var left = Math.max(0, u.capMin - u.usedMin), full = left <= 0, low = !full && left < 30;
+    return '<p class="note" style="margin-top:8px' + (full ? ';color:#c0392b;font-weight:700' : low ? ';color:#b9770e' : '') + '">⏱ AI minutes today (whole team): ' + u.usedMin + ' of ' + u.capMin + ' min used' +
+      (full ? ' · limit reached, try again tomorrow' : low ? ' · only ' + left + ' min left today' : '') + '</p>';
+  }
   function paintList(r) {
     var isAgent = !A.isGM(), my = (r && r.myTasks) || [], todo = my.filter(function (t) { return !t.done && t.kind !== 'comment'; }), fs = folders(r);
     document.getElementById('app').innerHTML = A.topBar('Meetings', 'mini mini', '<button class="icon" id="back">←</button>', '<button class="icon" id="mt-ref">↻</button>') +
       '<div class="wrap"><div id="mm-wait" class="note"></div>' +
       '<button class="btn red" id="mt-new" style="width:100%;min-height:58px;font-size:17px">🎙 Record a meeting</button>' +
-      '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording (e.g. iPhone Voice Memos)</button>' +
+      '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording (e.g. iPhone Voice Memos)</button>' + usageHtml(r) +
       (!r ? '<div class="panel empty" style="margin-top:14px"><div class="spin" style="margin:0 auto 8px"></div>Loading meetings…</div>' :
       (isAgent ? '<div class="section-title">My tasks from meetings <span>' + todo.length + ' to do</span></div>' + tasksHtml(my, true) : '') +
       (fs.length ? '<div class="section-title">By person or meeting <span>tap to see all, or record the next one</span></div><div class="alerts">' + fs.map(function (f) {

@@ -20,6 +20,7 @@ var MINUTES = (function () {
   var SECTION_CHARS = 18000;                // transcript per summary call; longer meetings are summarised in sections, then merged
   var WORK_MS = 4 * 60 * 1000;              // one process call works up to 4 minutes (Apps Script stops at 6)
   var TRIES = 3;
+  var DAILY_MIN = 300;                      // team total of meeting audio sent to the AI per day (Malaysia time). Script property DAILY_MINUTES changes it.
 
   var C;   // core helpers, set by attach()
   function fail(code) { var e = new Error(code); e.appCode = code; throw e; }
@@ -59,9 +60,17 @@ var MINUTES = (function () {
     return out;
   }
 
+  /* ---------- daily cap on AI minutes (cost control): counts every saved audio part, by the day it arrived (MYT) ---------- */
+  function capMin(store) { var v = Math.round(+store.prop('DAILY_MINUTES')); return v > 0 ? v : DAILY_MIN; }
+  function dayOf(iso) { var d = Date.parse(iso); return isNaN(d) ? '' : KS.todayMYT(new Date(d)); }
+  function usedSecs(store, parts) { var day = C.today(store); return (parts || store.load('mparts')).reduce(function (s, p) { return s + (dayOf(p.at) === day ? (+p.secs || 0) : 0); }, 0); }
+  function usage(store) { return {usedMin: Math.round(usedSecs(store) / 60), capMin: capMin(store)}; }
+  function hasCap(m) { return m.capped !== undefined && m.capped !== null && m.capped !== ''; }
+
   /* ---------- start / upload / stop ---------- */
   function start(q, store, me) {
     if (q.consent !== true) fail('consent_required');
+    if (usedSecs(store) >= capMin(store) * 60) fail('minutes_limit');
     var rows = meetings(store), now = store.now(), t = C.nowIso(store);
     // Only one recorder per meeting: show who is recording now, unless the person says theirs is a different meeting.
     var live = rows.filter(function (m) { return m.status === 'recording' && now - Date.parse(m.updated || m.started) < 20 * 60000; });
@@ -75,7 +84,7 @@ var MINUTES = (function () {
     rows.push(m);
     store.save('meetings', rows);
     C.log(store, m.byName, 'started recording a meeting', '', '', m.title + ' (' + people.length + ' people)');
-    return {ok: true, meeting: m};
+    return {ok: true, meeting: m, usage: usage(store)};
   }
 
   // Save one audio part (under the lock). Sending the same part twice is fine: the second is ignored.
@@ -89,6 +98,13 @@ var MINUTES = (function () {
     if (!b64 || b64.length > MAX_PART_B64 || !/^[A-Za-z0-9+\/=]+$/.test(b64)) fail('file_size');
     var parts = store.load('mparts'), old = parts.filter(function (p) { return p.meetingId === m.id && +p.n === n; })[0];
     if (old) return {ok: true, n: n, again: true};
+    // Today's team limit is reached: refuse this part. The minutes are written from the parts before it.
+    if (usedSecs(store, parts) >= capMin(store) * 60) {
+      m.capped = hasCap(m) ? Math.min(+m.capped, n) : n;
+      if (m.status === 'processing' && +m.parts > +m.capped) { m.parts = +m.capped; if (!m.parts) m.status = 'empty'; }
+      store.save('meetings', rows);
+      fail('minutes_limit');
+    }
     var ext = /mp4|m4a|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : /mpeg/.test(mime) ? 'mp3' : /wav/.test(mime) ? 'wav' : 'webm';
     var f = store.putFile({id: m.id, name: '🎙 ' + m.title}, 'part ' + (n + 1) + '.' + ext, mime.split(';')[0], b64);
     var marks = arr(q.marks).map(function (x) { return Math.round(+x); }).filter(function (x) { return x >= 0 && x <= secs + 5; }).slice(0, 50);
@@ -105,6 +121,7 @@ var MINUTES = (function () {
     if (m.status !== 'recording') return {ok: true, meeting: m};
     var n = Math.round(+q.parts);
     if (!(n >= 0 && n <= 200)) fail('invalid_request');
+    if (hasCap(m) && n > +m.capped) n = +m.capped;   // parts refused by the daily limit are not waited for
     m.parts = n; m.secs = Math.min(Math.max(0, Math.round(+q.secs) || 0), MAX_SECS);
     m.ended = C.nowIso(store); m.status = n ? 'processing' : 'empty'; m.updated = m.ended;
     store.save('meetings', rows);
@@ -277,7 +294,7 @@ var MINUTES = (function () {
       .sort(function (a, b) { return a.started < b.started ? 1 : -1; }).slice(0, 100);
     var mine = me.role === 'leader' ? [] : store.load('mtasks').filter(function (t) { return t.agentId === me.agent.id && (t.kind !== 'comment' || C.truthy(t.shared)); });
     var titles = {}; meetings(store).forEach(function (m) { titles[m.id] = m.title; });
-    return {ok: true, me: {name: meName(store, me)}, meetings: rows.map(function (m) { return light(store, m, me); }),
+    return {ok: true, me: {name: meName(store, me)}, usage: usage(store), meetings: rows.map(function (m) { return light(store, m, me); }),
       myTasks: mine.map(function (t) { return taskOut(t, titles[t.meetingId]); }).sort(function (a, b) { return (a.done - b.done) || (a.updated < b.updated ? 1 : -1); }).slice(0, 200)};
   }
   function taskOut(t, title) { return {id: t.id, meetingId: t.meetingId, meeting: title || '', agentId: t.agentId, kind: t.kind, text: t.text, due: t.due, shared: C.truthy(t.shared), done: C.truthy(t.done), doneAt: t.doneAt, updated: t.updated}; }
@@ -469,7 +486,7 @@ var MINUTES = (function () {
   return {
     TABLES: {
       // status: recording | processing | review | approved | failed | empty
-      meetings: ['id', 'title', 'by', 'byName', 'started', 'ended', 'status', 'people', 'secs', 'parts', 'summary', 'next', 'approved', 'approvedBy', 'audioGone', 'work', 'err', 'updated', 'series'],
+      meetings: ['id', 'title', 'by', 'byName', 'started', 'ended', 'status', 'people', 'secs', 'parts', 'summary', 'next', 'approved', 'approvedBy', 'audioGone', 'work', 'err', 'updated', 'series', 'capped'],
       // one row per audio part (about 5 minutes); status: saved | done | failed
       mparts: ['meetingId', 'n', 'fileId', 'mime', 'secs', 'marks', 'status', 'text', 'err', 'tries', 'at'],
       // what each agent got from an approved meeting; kind: task | homework | comment (comment shown to the agent only when shared)

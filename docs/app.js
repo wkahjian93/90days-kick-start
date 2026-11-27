@@ -26,7 +26,8 @@
     forbidden: 'You do not have access to that.', bad_time: 'Time does not look right.', bad_introducer: 'That introducer cannot be chosen (it would loop back to this agent).', title_required: 'The card needs a title.', bad_week: 'Choose a week for the card.',
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
     invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', consent_required: 'Tick that everyone knows the meeting is being recorded.',
-    meeting_closed: 'This recording has already been stopped.', meeting_not_ready: 'The minutes are not ready yet.', ai_no_key: 'mini mini is not switched on yet: the OpenAI key is missing on the server.', unmatched_people: 'Choose who each person is first.', daily_limit: 'Daily limit reached. Try tomorrow.'
+    meeting_closed: 'This recording has already been stopped.', meeting_not_ready: 'The minutes are not ready yet.', ai_no_key: 'mini mini is not switched on yet: the OpenAI key is missing on the server.', unmatched_people: 'Choose who each person is first.', daily_limit: 'Daily limit reached. Try tomorrow.',
+    minutes_limit: 'Today\'s AI minutes for the team are used up, so recording has stopped. Everything recorded before this still gets its minutes. Try again tomorrow, or ask the GM to raise the daily limit.'
   };
 
   /* ---------- helpers ---------- */

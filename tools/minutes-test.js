@@ -248,4 +248,22 @@ ok('90 days after the meeting the whole record is deleted by itself: minutes, pa
   assert.equal(Object.keys(files).length, 1, 'only the fresh meeting\'s audio is left');
 });
 
+ok('daily cap on AI minutes: the team total per Malaysia day; a part over the cap is refused and the minutes use the parts before it; resets next day', () => {
+  clock = new Date('2026-12-10T02:00:00Z');   // a fresh day: nothing used yet
+  const oldProp = store.prop; store.prop = k => k === 'DAILY_MINUTES' ? '20' : oldProp(k);   // 20 minutes for the test
+  const s = call({op: 'mtStart', code: L, title: 'Cap test', consent: true, people: [{id: ml.id}], different: true});
+  assert.deepEqual(s.usage, {usedMin: 0, capMin: 20});
+  const id = s.meeting.id;
+  call({op: 'mtPart', code: L, id, n: 0, mime: 'audio/webm', secs: 900, b64: B64});   // 15 min
+  call({op: 'mtPart', code: L, id, n: 1, mime: 'audio/webm', secs: 600, b64: B64});   // 25 min: under the cap when it arrived, so accepted
+  err({op: 'mtPart', code: L, id, n: 2, mime: 'audio/webm', secs: 300, b64: B64}, 'minutes_limit');
+  assert.equal(call({op: 'mtList', code: L}).usage.usedMin, 25);
+  const f = call({op: 'mtFinish', code: L, id, parts: 3, secs: 1800}).meeting;
+  assert.equal(+f.parts, 2, 'the refused part is not waited for');
+  err({op: 'mtStart', code: L, title: 'Another', consent: true, people: [], different: true}, 'minutes_limit');
+  clock = new Date('2026-12-10T16:30:00Z');   // 00:30 next day in Malaysia
+  assert.equal(call({op: 'mtStart', code: L, title: 'Next day', consent: true, people: [], different: true}).ok, true);
+  store.prop = oldProp;
+});
+
 console.log('\nAll ' + pass + ' mini mini checks passed.');
