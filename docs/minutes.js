@@ -69,7 +69,8 @@ var MINUTES = (function () {
     var people = cleanPeople(store, q.people);
     if (me.role !== 'leader' && !people.some(function (p) { return p.id === me.agent.id; })) people.unshift({id: me.agent.id, name: me.agent.name});
     var m = {id: 'MT' + C.newId(store, 8), title: title, by: meKey(me), byName: meName(store, me), started: t, ended: '', status: 'recording', people: people,
-      secs: 0, parts: 0, summary: '', next: '', approved: '', approvedBy: '', audioGone: '', work: '', err: '', updated: t};
+      secs: 0, parts: 0, summary: '', next: '', approved: '', approvedBy: '', audioGone: '', work: '', err: '', updated: t,
+      series: title};   // the name given at the start: stays the same when the minutes get a new title, so regular meetings file together
     rows.push(m);
     store.save('meetings', rows);
     C.log(store, m.byName, 'started recording a meeting', '', '', m.title + ' (' + people.length + ' people)');
@@ -265,7 +266,7 @@ var MINUTES = (function () {
   /* ---------- reading ---------- */
   function light(store, m, me) {
     var s = parseObj(m.summary), tasks = store.load('mtasks').filter(function (t) { return t.meetingId === m.id; });
-    var o = {id: m.id, title: m.title, byName: m.byName, started: m.started, ended: m.ended, secs: +m.secs, status: m.status, people: m.people,
+    var o = {id: m.id, title: m.title, series: str(m.series, 80), byName: m.byName, started: m.started, ended: m.ended, secs: +m.secs, status: m.status, people: m.people,
       manage: canManage(m, me), next: parseObj(m.next), approved: m.approved, headline: s && s.summary && s.summary[0] || ''};
     if (o.manage) { o.tasksTotal = tasks.length; o.tasksDone = tasks.filter(function (t) { return C.truthy(t.done); }).length; o.err = m.err; }
     return o;
@@ -275,7 +276,7 @@ var MINUTES = (function () {
       .sort(function (a, b) { return a.started < b.started ? 1 : -1; }).slice(0, 100);
     var mine = me.role === 'leader' ? [] : store.load('mtasks').filter(function (t) { return t.agentId === me.agent.id && (t.kind !== 'comment' || C.truthy(t.shared)); });
     var titles = {}; meetings(store).forEach(function (m) { titles[m.id] = m.title; });
-    return {ok: true, meetings: rows.map(function (m) { return light(store, m, me); }),
+    return {ok: true, me: {name: meName(store, me)}, meetings: rows.map(function (m) { return light(store, m, me); }),
       myTasks: mine.map(function (t) { return taskOut(t, titles[t.meetingId]); }).sort(function (a, b) { return (a.done - b.done) || (a.updated < b.updated ? 1 : -1); }).slice(0, 200)};
   }
   function taskOut(t, title) { return {id: t.id, meetingId: t.meetingId, meeting: title || '', agentId: t.agentId, kind: t.kind, text: t.text, due: t.due, shared: C.truthy(t.shared), done: C.truthy(t.done), doneAt: t.doneAt, updated: t.updated}; }
@@ -456,7 +457,7 @@ var MINUTES = (function () {
   return {
     TABLES: {
       // status: recording | processing | review | approved | failed | empty
-      meetings: ['id', 'title', 'by', 'byName', 'started', 'ended', 'status', 'people', 'secs', 'parts', 'summary', 'next', 'approved', 'approvedBy', 'audioGone', 'work', 'err', 'updated'],
+      meetings: ['id', 'title', 'by', 'byName', 'started', 'ended', 'status', 'people', 'secs', 'parts', 'summary', 'next', 'approved', 'approvedBy', 'audioGone', 'work', 'err', 'updated', 'series'],
       // one row per audio part (about 5 minutes); status: saved | done | failed
       mparts: ['meetingId', 'n', 'fileId', 'mime', 'secs', 'marks', 'status', 'text', 'err', 'tries', 'at'],
       // what each agent got from an approved meeting; kind: task | homework | comment (comment shown to the agent only when shared)

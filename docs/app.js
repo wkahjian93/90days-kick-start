@@ -256,7 +256,7 @@
   }
   function signOut() {
     if (MINI.recording()) { toast('Stop the recording first.', true); return; }
-    ls('ks_code', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; if (window.APP) window.APP.st = st; renderLogin();
+    ls('ks_code', null); ls('mm_list', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; if (window.APP) window.APP.st = st; renderLogin();
   }
 
   async function loadBoard() { st.data = await api('board'); }

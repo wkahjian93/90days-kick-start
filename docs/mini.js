@@ -91,14 +91,12 @@ var MINI = (function () {
   }
 
   /* ---------- start a recording ---------- */
-  async function startSheet() {
+  async function startSheet(preset) {
     if (REC) { recScreen(); return; }
     if (!navigator.mediaDevices || !window.MediaRecorder) { A.toast('This phone\'s browser cannot record here. Open the app in Chrome (Android) or Safari (iPhone).', true); return; }
     await loadNames();
-    var d = new Date(), def = 'Meeting ' + d.toLocaleDateString('en-MY', {day: 'numeric', month: 'short', timeZone: 'Asia/Kuala_Lumpur'});
-    var me = A.st.me && A.st.me.id ? [{id: A.st.me.id, name: A.st.me.name}] : [];
-    A.sheet('<h3>🎙 Record a meeting</h3>' +
-      '<label class="f">Meeting name</label><input type="text" id="mt-title" maxlength="80" value="' + esc(def) + '">' +
+    var me = preset && preset.people ? preset.people : A.st.me && A.st.me.id ? [{id: A.st.me.id, name: A.st.me.name}] : [];
+    A.sheet('<h3>🎙 Record a meeting</h3>' + titleField(preset) +
       '<label class="f">Who is in this meeting?</label>' + peoplePicker(me, 'mp') +
       (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this recording tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
         '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
@@ -109,20 +107,27 @@ var MINI = (function () {
       var ok = el.querySelector('#mt-ok'), rule = el.querySelector('#mt-rule'), go = el.querySelector('#mt-go');
       ok.onchange = function () { go.disabled = !ok.checked || (rule && !rule.checked); };
       if (rule) rule.onchange = ok.onchange;
-      go.onclick = async function () { var body = {title: el.querySelector('#mt-title').value.trim(), people: readPicker(el, 'mp'), consent: true}; close(); begin(body); };
+      go.onclick = async function () { var ppl = readPicker(el, 'mp'), body = {title: el.querySelector('#mt-title').value.trim() || autoTitle(ppl), people: ppl, consent: true}; close(); begin(body); };
     });
+  }
+  // The timer screen shows the moment Start is tapped; the clock runs as soon as the microphone and the server are ready.
+  function startingScreen(title) {
+    A.st.screen = 'rec';
+    document.getElementById('app').innerHTML = A.topBar('Recording', 'mini mini', '', '') +
+      '<div class="wrap"><div class="recbox"><div class="recdot"></div><div class="rectime">0:00</div><div class="rectitle">' + esc(title) + '</div><div class="note">Starting… allow the microphone if the phone asks.</div></div></div>';
   }
   async function begin(body) {
     var stream;
+    startingScreen(body.title);
     try { stream = await navigator.mediaDevices.getUserMedia(MIC_ASK); }
-    catch (e) { A.toast('No microphone access. Allow the microphone for this app in the phone\'s settings, then try again.', true); return; }
+    catch (e) { open(); A.toast('No microphone access. Allow the microphone for this app in the phone\'s settings, then try again.', true); return; }
     var r;
-    try { r = await A.api('mtStart', body); } catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); A.showErr(e); return; }
+    try { r = await A.api('mtStart', body, {quiet: true}); } catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); open(); A.showErr(e); return; }
     if (r.busy) {
       var b = r.busy[0];
       var other = await A.confirmBox('Someone is already recording', '<b>' + esc(b.byName) + '</b> has been recording "' + esc(b.title) + '" since ' + esc(A.fmtTime(b.started)) + '.<br><br>If you are in the <b>same meeting</b>, you do not need to record: you will get the minutes. Only record if this is a <b>different meeting</b>.', 'It\'s a different meeting');
-      if (!other) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
-      try { r = await A.api('mtStart', Object.assign({different: true}, body)); } catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); A.showErr(e); return; }
+      if (!other) { stream.getTracks().forEach(function (t) { t.stop(); }); open(); return; }
+      try { r = await A.api('mtStart', Object.assign({different: true}, body), {quiet: true}); } catch (e) { stream.getTracks().forEach(function (t) { t.stop(); }); open(); A.showErr(e); return; }
     }
     lsSet(LS_REC, {id: r.meeting.id, title: r.meeting.title, n: 0, secs: 0});
     record(stream, r.meeting.id, r.meeting.title, 0, 0);
@@ -169,15 +174,15 @@ var MINI = (function () {
     }
     return new Blob([out.buffer], {type: 'audio/wav'});
   }
-  async function uploadSheet() {
+  async function uploadSheet(preset) {
     if (REC) { recScreen(); return; }
     await loadNames();
-    var me = A.st.me && A.st.me.id ? [{id: A.st.me.id, name: A.st.me.name}] : [];
+    var me = preset && preset.people ? preset.people : A.st.me && A.st.me.id ? [{id: A.st.me.id, name: A.st.me.name}] : [];
     A.sheet('<h3>⬆ Upload a recording</h3>' +
       '<p class="note">For a meeting recorded outside this app, for example with <b>Voice Memos</b> on an iPhone (it keeps recording while the phone is locked). In Voice Memos: tap the recording → <b>…</b> → <b>Save to Files</b>, then choose it here.</p>' +
       '<label class="f">The recording</label><input type="file" id="up-file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm">' +
       '<div class="note" id="up-info"></div>' +
-      '<label class="f">Meeting name</label><input type="text" id="mt-title" maxlength="80" value="">' +
+      titleField(preset) +
       '<label class="f">Who was in this meeting?</label>' + peoplePicker(me, 'mp') +
       (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
         '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
@@ -194,11 +199,10 @@ var MINI = (function () {
           if (!fileMime(f)) info.textContent = '⚠️ This is not a sound file mini mini can read. Use m4a, mp3, wav, aac, ogg or webm.';
           else if (f.size > UP_MAX_BYTES) info.textContent = '⚠️ This file is too big (over 200 MB).';
           else info.textContent = (f.size / 1048576).toFixed(1) + ' MB';
-          if (!ti.value.trim()) ti.value = 'Meeting ' + new Date(f.lastModified || Date.now()).toLocaleDateString('en-MY', {day: 'numeric', month: 'short', timeZone: 'Asia/Kuala_Lumpur'});
         }
         check();
       };
-      go.onclick = function () { var body = {title: ti.value.trim(), people: readPicker(el, 'mp'), consent: true, different: true}, f = fi.files[0]; close(); beginUpload(body, f); };
+      go.onclick = function () { var ppl = readPicker(el, 'mp'), body = {title: ti.value.trim() || autoTitle(ppl), people: ppl, consent: true, different: true}, f = fi.files[0]; close(); beginUpload(body, f); };
     });
   }
   function upScreen(msg) {
@@ -430,31 +434,123 @@ var MINI = (function () {
   }
 
   /* ---------- meetings screen ---------- */
-  async function open() {
-    A.st.screen = 'meetings';
-    var r;
-    try { r = await A.api('mtList'); } catch (e) { A.showErr(e); return; }
-    cache.list = r;
-    var isAgent = !A.isGM(), my = r.myTasks || [], open = my.filter(function (t) { return !t.done && t.kind !== 'comment'; });
+  /* The last list is kept on the phone, so Meetings opens at once and is then brought up to date. */
+  function whoKey() { return (A.st.demo ? 'd:' : '') + (A.isGM() ? 'GM' : (A.st.me && A.st.me.id || '')); }
+  function cachedList() { if (cache.list) return cache.list; var c = lsGet('mm_list'); return c && c.who === whoKey() ? c.r : null; }
+  function setList(r) { cache.list = r; lsSet('mm_list', {who: whoKey(), r: r}); }
+  function myName() { var r = cache.list; return (r && r.me && r.me.name) || (A.st.me && A.st.me.name) || ''; }
+
+  /* Folders: a meeting of two people is filed under the other person's name; any other meeting under its fixed name. */
+  function folderOf(m) {
+    var seen = {}, ps = [], mine = myName().trim().toLowerCase();
+    (m.people || []).map(function (p) { return p.name; }).concat([m.byName]).forEach(function (n) { n = String(n || '').trim(); var k = n.toLowerCase(); if (n && !seen[k]) { seen[k] = 1; ps.push(n); } });
+    var others = ps.filter(function (n) { return n.toLowerCase() !== mine; });
+    if (ps.length === 2 && others.length === 1) return {key: 'p:' + others[0].toLowerCase(), label: others[0], one: true};
+    if (ps.length === 2) return {key: 'p:' + ps.map(function (n) { return n.toLowerCase(); }).sort().join('&'), label: ps.join(' & '), one: true};
+    var name = String(m.series || m.title || 'Meeting').trim();
+    return {key: 'g:' + name.toLowerCase(), label: name, one: false};
+  }
+  function folders(r) {
+    var map = {}, out = [];
+    ((r && r.meetings) || []).forEach(function (m) {   // newest first
+      var f = folderOf(m), x = map[f.key];
+      if (!x) { x = map[f.key] = {key: f.key, label: f.label, one: f.one, list: []}; out.push(x); }
+      x.list.push(m);
+    });
+    return out;
+  }
+  function groupNames() { return folders(cachedList()).filter(function (f) { return !f.one; }).map(function (f) { return f.label; }); }
+  function isMe(p) { return !!(p && ((p.id && A.st.me && p.id === A.st.me.id) || (p.name && p.name.trim().toLowerCase() === myName().trim().toLowerCase()))); }
+  function autoTitle(people) { var o = (people || []).filter(function (p) { return !isMe(p); }); return o.length === 1 ? '1-to-1: ' + o[0].name : 'Team meeting'; }
+  function titleField(preset) {
+    return '<label class="f">Meeting name</label><input type="text" id="mt-title" maxlength="80" list="mt-names" placeholder="e.g. Monday Team Meeting" value="' + esc(preset && preset.title || '') + '">' +
+      '<datalist id="mt-names">' + groupNames().map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist>' +
+      '<div class="note">Group meeting: use the <b>same name every time</b>, so all of them stay in one folder. A meeting of two people is filed under the person\'s name by itself; you can leave the name empty.</div>';
+  }
+  function rowHtml(m) {
+    return '<div class="alert" data-mt="' + esc(m.id) + '"><div class="txt" style="flex:1"><div class="row1" style="display:flex;justify-content:space-between;gap:8px"><b>' + esc(m.title) + '</b>' + chip(m) + '</div>' +
+      '<div class="note">' + esc(A.fmtTime(m.started)) + (m.secs ? ' · ' + mmss(m.secs) : '') + ' · recorded by ' + esc(m.byName) + ' · ' + (m.people || []).length + ' people' +
+      (m.manage && m.status === 'approved' ? ' · tasks done ' + m.tasksDone + '/' + m.tasksTotal : '') + '</div>' +
+      (m.headline ? '<div style="margin-top:4px">' + esc(m.headline) + '</div>' : '') + '</div></div>';
+  }
+  function bindRows() {
+    document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt); }; });
+    bindTicks(document.getElementById('app'));
+    paintRec();
+  }
+  function paintList(r) {
+    var isAgent = !A.isGM(), my = (r && r.myTasks) || [], todo = my.filter(function (t) { return !t.done && t.kind !== 'comment'; }), fs = folders(r);
     document.getElementById('app').innerHTML = A.topBar('Meetings', 'mini mini', '<button class="icon" id="back">←</button>', '<button class="icon" id="mt-ref">↻</button>') +
       '<div class="wrap"><div id="mm-wait" class="note"></div>' +
       '<button class="btn red" id="mt-new" style="width:100%;min-height:58px;font-size:17px">🎙 Record a meeting</button>' +
       '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording (e.g. iPhone Voice Memos)</button>' +
-      (isAgent ? '<div class="section-title">My tasks from meetings <span>' + open.length + ' to do</span></div>' + tasksHtml(my, true) : '') +
+      (!r ? '<div class="panel empty" style="margin-top:14px"><div class="spin" style="margin:0 auto 8px"></div>Loading meetings…</div>' :
+      (isAgent ? '<div class="section-title">My tasks from meetings <span>' + todo.length + ' to do</span></div>' + tasksHtml(my, true) : '') +
+      (fs.length ? '<div class="section-title">By person or meeting <span>tap to see all, or record the next one</span></div><div class="alerts">' + fs.map(function (f) {
+        var busy = f.list.filter(function (m) { return m.manage && (m.status === 'processing' || m.status === 'review'); }).length;
+        return '<div class="alert" data-folder="' + esc(f.key) + '"><div class="txt" style="flex:1"><div class="row1" style="display:flex;justify-content:space-between;gap:8px"><b>' + (f.one ? '👤 ' : '👥 ') + esc(f.label) + '</b><span class="chip open">' + f.list.length + '</span></div>' +
+          '<div class="note">Last: ' + esc(A.fmtTime(f.list[0].started)) + (busy ? ' · ' + busy + ' not sent yet' : '') + '</div></div><span style="font-size:20px;opacity:.5">›</span></div>';
+      }).join('') + '</div>' : '') +
       '<div class="section-title">' + (A.isGM() ? 'All meetings' : 'Meetings') + '</div>' +
-      (r.meetings.length ? '<div class="alerts">' + r.meetings.map(function (m) {
-        return '<div class="alert" data-mt="' + esc(m.id) + '"><div class="txt" style="flex:1"><div class="row1" style="display:flex;justify-content:space-between;gap:8px"><b>' + esc(m.title) + '</b>' + chip(m) + '</div>' +
-          '<div class="note">' + esc(A.fmtTime(m.started)) + (m.secs ? ' · ' + mmss(m.secs) : '') + ' · recorded by ' + esc(m.byName) + ' · ' + (m.people || []).length + ' people' +
-          (m.manage && m.status === 'approved' ? ' · tasks done ' + m.tasksDone + '/' + m.tasksTotal : '') + '</div>' +
-          (m.headline ? '<div style="margin-top:4px">' + esc(m.headline) + '</div>' : '') + '</div></div>';
-      }).join('') + '</div>' : '<div class="panel empty">No meetings yet. Tap <b>🎙 Record a meeting</b> at the start of your next meeting.</div>') + '</div>';
+      (r.meetings.length ? '<div class="alerts">' + r.meetings.map(rowHtml).join('') + '</div>' : '<div class="panel empty">No meetings yet. Tap <b>🎙 Record a meeting</b> at the start of your next meeting.</div>')) + '</div>';
     document.getElementById('back').onclick = A.home;
     document.getElementById('mt-ref').onclick = open;
-    document.getElementById('mt-new').onclick = startSheet;
-    document.getElementById('mt-up').onclick = uploadSheet;
-    document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt); }; });
-    bindTicks(document.getElementById('app'));
-    paintRec();
+    document.getElementById('mt-new').onclick = function () { startSheet(); };
+    document.getElementById('mt-up').onclick = function () { uploadSheet(); };
+    document.querySelectorAll('[data-folder]').forEach(function (b) { b.onclick = function () { cache.folder = b.dataset.folder; paintFolder(); }; });
+    bindRows();
+  }
+  function paintFolder() {
+    var f = folders(cachedList()).filter(function (x) { return x.key === cache.folder; })[0];
+    if (!f) { cache.folder = null; paintList(cachedList()); return; }
+    var preset = {title: f.one ? '' : f.label, people: (f.list[0].people || []).slice()};
+    document.getElementById('app').innerHTML = A.topBar(f.label, f.one ? 'Meetings with' : 'Meeting', '<button class="icon" id="back">←</button>', '<button class="icon" id="mt-ref">↻</button>') +
+      '<div class="wrap"><div id="mm-wait" class="note"></div>' +
+      '<button class="btn red" id="mt-new" style="width:100%;min-height:58px;font-size:17px">🎙 Record: ' + esc(f.label) + '</button>' +
+      '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording here</button>' +
+      '<div class="section-title">' + (f.one ? 'Every meeting with ' + esc(f.label) : 'Every ' + esc(f.label)) + ' <span>' + f.list.length + '</span></div>' +
+      '<div class="alerts">' + f.list.map(rowHtml).join('') + '</div></div>';
+    document.getElementById('back').onclick = function () { cache.folder = null; paintList(cachedList()); };
+    document.getElementById('mt-ref').onclick = refresh;
+    document.getElementById('mt-new').onclick = function () { startSheet(preset); };
+    document.getElementById('mt-up').onclick = function () { uploadSheet(preset); };
+    bindRows();
+  }
+  function repaint() { if (A.st.screen !== 'meetings') return; if (cache.folder) paintFolder(); else paintList(cachedList()); }
+  async function refresh() {
+    var r;
+    try { r = await A.api('mtList', {}, {quiet: true}); } catch (e) { if (!cachedList()) A.showErr(e); return; }
+    var same = JSON.stringify(r) === JSON.stringify(cache.list);
+    setList(r);
+    if (!same) repaint();
+    drive();
+  }
+  // While the list is open, keep the minutes being written moving and show them as soon as they are ready.
+  var driving = null;
+  async function drive() {
+    if (driving) return;
+    var me = driving = {};
+    try {
+      while (driving === me && A.st.screen === 'meetings') {
+        var todo = ((cache.list && cache.list.meetings) || []).filter(function (m) { return m.manage && m.status === 'processing'; });
+        if (!todo.length) break;
+        var changed = false;
+        for (var i = 0; i < todo.length; i++) { try { var p = await A.api('mtProcess', {id: todo[i].id}, {quiet: true}); if (p.status !== 'processing') changed = true; } catch (e) {} }
+        if (changed && driving === me) { driving = null; refresh(); return; }
+        await new Promise(function (r) { setTimeout(r, 6000); });
+      }
+    } finally { if (driving === me) driving = null; }
+  }
+  function open() {
+    A.st.screen = 'meetings'; cache.folder = null;
+    paintList(cachedList());   // at once, from what this phone saw last
+    loadNames();
+    return refresh();
+  }
+  function onBack() {   // the agent came back to the app: carry on sending, and show what changed
+    if (document.visibilityState !== 'visible' || !A) return;
+    pump();
+    if (A.st.screen === 'meetings' && !REC) refresh();
   }
   var KINDN = {task: '任务 Task', homework: '功课 Homework', comment: '💬 Comment'};
   function tasksHtml(list, withMeeting) {
@@ -490,13 +586,16 @@ var MINI = (function () {
   async function waitScreen(id, m) {
     document.getElementById('app').innerHTML = A.topBar(m.title, 'mini mini', '<button class="icon" id="back">←</button>', '') +
       '<div class="wrap"><div class="recbox"><div class="spin" style="margin:0 auto 12px"></div><b id="wt-h">mini mini is writing the minutes…</b><div class="note" id="wt-n" style="margin-top:6px"></div><div id="mm-wait" class="note"></div></div>' +
-      '<p class="note">You can close the app. The minutes keep being written on the server, and the meeting shows <b>👀 Ready to check</b> in Meetings when done (about 1 minute for every 10 minutes recorded).</p></div>';
+      '<div class="panel note" id="wt-safe" style="margin-top:14px"></div>' +
+      '<p class="note">The minutes are written on the server (about 1 minute for every 10 minutes recorded). The meeting shows <b>✍️ Writing minutes…</b> in Meetings, then <b>👀 Ready to check</b>.</p></div>';
+    function safe() { waitingCount().then(function (w) { var e = document.getElementById('wt-safe'); if (e) e.innerHTML = w ? '⏳ <b>Stay in the app a little longer:</b> ' + w + ' part(s) of the recording are still being sent from this phone. If you leave now nothing is lost, but sending only carries on when you open the app again.' : '✅ <b>The recording is saved.</b> You can leave the app, reply WhatsApp or use the phone for other things. The minutes carry on being written, and are here when you come back.'; }); }
+    safe();
     document.getElementById('back').onclick = function () { polling = null; open(); };
     var me = polling = {};
     while (polling === me && A.st.screen === 'meeting') {
       var p;
       try { p = await A.api('mtProcess', {id: id}, {quiet: true}); } catch (e) { var n0 = document.getElementById('wt-n'); if (n0) n0.textContent = 'Waiting for the server… (' + (A.ERR[e.code] || e.code) + ')'; await new Promise(function (r) { setTimeout(r, 8000); }); continue; }
-      var n = document.getElementById('wt-n');
+      var n = document.getElementById('wt-n'); safe();
       if (n) n.textContent = p.got < p.expected ? 'Receiving the recording: ' + p.got + ' of ' + p.expected + ' parts' : p.done < p.expected ? 'Turning speech into text: ' + p.done + ' of ' + p.expected + ' parts' : 'Writing the summary…';
       if (p.err && n) n.textContent += ' · retrying (' + p.err + ')';
       if (p.status !== 'processing' && p.status !== 'recording') { polling = null; openMeeting(id); return; }
@@ -589,7 +688,7 @@ var MINI = (function () {
       };
       el.querySelector('#rv-del').onclick = async function () {
         if (!(await A.confirmBox('Delete this meeting?', 'The recording, the transcript, the minutes and every task sent from it are deleted. This cannot be undone.', 'Delete', true, 'DELETE'))) return;
-        try { await A.api('mtDelete', {id: m.id, confirm: true}); A.toast('Meeting deleted'); open(); } catch (e) { A.showErr(e); }
+        try { await A.api('mtDelete', {id: m.id, confirm: true}); A.toast('Meeting deleted'); if (cache.list) setList(Object.assign({}, cache.list, {meetings: cache.list.meetings.filter(function (x) { return x.id !== m.id; })})); open(); } catch (e) { A.showErr(e); }
       };
     }
     paint();
@@ -629,10 +728,12 @@ var MINI = (function () {
     A.api('mtList', {}, {quiet: true}).then(function (r) {
       var check = r.meetings.filter(function (m) { return m.manage && m.status === 'review'; }).length;
       var todo = (r.myTasks || []).filter(function (t) { return !t.done && t.kind !== 'comment'; }).length;
-      var msg = [check ? '👀 ' + check + ' to check' : '', todo ? '📋 ' + todo + ' task(s) to do' : ''].filter(Boolean).join(' · ');
+      var writing = r.meetings.filter(function (m) { return m.manage && m.status === 'processing'; }).length;
+      setList(r);
+      var msg = [writing ? '✍️ ' + writing + ' being written' : '', check ? '👀 ' + check + ' to check' : '', todo ? '📋 ' + todo + ' task(s) to do' : ''].filter(Boolean).join(' · ');
       if (n && msg) n.innerHTML = '<b>' + esc(msg) + '</b>';
     }, function () {});
   }
 
-  return {init: function (app) { A = app; setTimeout(resumeCheck, 800); }, open: open, startSheet: startSheet, homeCard: homeCard, bindHome: bindHome, recording: function () { return !!REC; }};
+  return {init: function (app) { A = app; setTimeout(resumeCheck, 800); document.addEventListener('visibilitychange', onBack); }, open: open, startSheet: startSheet, homeCard: homeCard, bindHome: bindHome, recording: function () { return !!REC; }};
 })();

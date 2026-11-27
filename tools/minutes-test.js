@@ -219,4 +219,15 @@ ok('uploaded recording: WAV parts are accepted and sent to the speech-to-text wi
   assert.equal(r.status, 'review');
 });
 
+ok('folders: the name given at the start is kept as the fixed meeting name, and the list says who is looking', () => {
+  const m4 = call({op: 'mtStart', code: L, title: 'Monday Team Meeting', consent: true, people: [{id: ml.id}], different: true}).meeting;
+  call({op: 'mtPart', code: L, id: m4.id, n: 0, mime: 'audio/mp4', secs: 60, b64: B64});
+  call({op: 'mtFinish', code: L, id: m4.id, parts: 1, secs: 60});
+  call({op: 'mtProcess', code: L, id: m4.id});
+  call({op: 'mtDraft', code: L, id: m4.id, title: 'AI renamed this', draft: call({op: 'mtGet', code: L, id: m4.id}).summary});
+  const r = call({op: 'mtList', code: L}), x = r.meetings.find(y => y.id === m4.id);
+  assert.equal(x.title, 'AI renamed this'); assert.equal(x.series, 'Monday Team Meeting');
+  assert(r.me && r.me.name);
+});
+
 console.log('\nAll ' + pass + ' mini mini checks passed.');
