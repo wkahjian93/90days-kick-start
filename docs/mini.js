@@ -100,7 +100,7 @@ var MINI = (function () {
       '<label class="f">Who is in this meeting?</label>' + peoplePicker(me, 'mp') +
       (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this recording tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
         '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
-      '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone here knows this meeting is being recorded</b> and agrees. The recording is used only to write the minutes, and the audio is deleted 30 days after the minutes are approved.</span></label>' +
+      '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone here knows this meeting is being recorded</b> and agrees. The recording is used only to write the minutes, the audio is deleted 30 days after the minutes are approved, and the minutes 90 days after the meeting.</span></label>' +
       '<p class="note">Only one person records each meeting. Keep this phone near the people talking, with the screen on. Say <b>"mini mini, …"</b> during the meeting to make sure something is noted.</p>' +
       '<div class="actions"><button class="btn red" id="mt-go" style="width:100%" disabled>● Start recording</button></div>', function (el, close) {
       bindPicker(el, 'mp');
@@ -186,7 +186,7 @@ var MINI = (function () {
       '<label class="f">Who was in this meeting?</label>' + peoplePicker(me, 'mp') +
       (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
         '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
-      '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone in this recording knew it was being recorded</b> and agreed. The recording is used only to write the minutes, and the audio is deleted 30 days after the minutes are approved.</span></label>' +
+      '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone in this recording knew it was being recorded</b> and agreed. The recording is used only to write the minutes, the audio is deleted 30 days after the minutes are approved, and the minutes 90 days after the meeting.</span></label>' +
       '<p class="note">Long recordings are large to send: use Wi-Fi and keep the app open until it says all parts are sent. Up to 4 hours.</p>' +
       '<div class="actions"><button class="btn red" id="mt-go" style="width:100%" disabled>⬆ Upload and write minutes</button></div>', function (el, close) {
       bindPicker(el, 'mp');
@@ -471,8 +471,14 @@ var MINI = (function () {
     return '<div class="alert" data-mt="' + esc(m.id) + '"><div class="txt" style="flex:1"><div class="row1" style="display:flex;justify-content:space-between;gap:8px"><b>' + esc(m.title) + '</b>' + chip(m) + '</div>' +
       '<div class="note">' + esc(A.fmtTime(m.started)) + (m.secs ? ' · ' + mmss(m.secs) : '') + ' · recorded by ' + esc(m.byName) + ' · ' + (m.people || []).length + ' people' +
       (m.manage && m.status === 'approved' ? ' · tasks done ' + m.tasksDone + '/' + m.tasksTotal : '') + '</div>' +
-      (m.headline ? '<div style="margin-top:4px">' + esc(m.headline) + '</div>' : '') + '</div></div>';
+      (m.headline ? '<div style="margin-top:4px">' + esc(m.headline) + '</div>' : '') + leftHtml(m) + '</div></div>';
   }
+  // Every meeting record is deleted by itself 90 days after the meeting; say so when it is close.
+  function leftHtml(m) {
+    var end = Date.parse(m.keepUntil || '') || (Date.parse(m.started) + 90 * 86400000), d = Math.ceil((end - Date.now()) / 86400000);
+    return d <= 14 ? '<div class="note" style="color:var(--red)">🗑 Deleted by itself ' + (d <= 0 ? 'today' : 'in ' + d + ' day' + (d === 1 ? '' : 's')) + '. Copy anything you still need.</div>' : '';
+  }
+  var KEEP_NOTE = '<p class="note" style="margin-top:12px">🗑 Every meeting record (minutes, tasks and recording) is deleted by itself 90 days after the meeting.</p>';
   function bindRows() {
     document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt); }; });
     bindTicks(document.getElementById('app'));
@@ -492,7 +498,7 @@ var MINI = (function () {
           '<div class="note">Last: ' + esc(A.fmtTime(f.list[0].started)) + (busy ? ' · ' + busy + ' not sent yet' : '') + '</div></div><span style="font-size:20px;opacity:.5">›</span></div>';
       }).join('') + '</div>' : '') +
       '<div class="section-title">' + (A.isGM() ? 'All meetings' : 'Meetings') + '</div>' +
-      (r.meetings.length ? '<div class="alerts">' + r.meetings.map(rowHtml).join('') + '</div>' : '<div class="panel empty">No meetings yet. Tap <b>🎙 Record a meeting</b> at the start of your next meeting.</div>')) + '</div>';
+      (r.meetings.length ? '<div class="alerts">' + r.meetings.map(rowHtml).join('') + '</div>' : '<div class="panel empty">No meetings yet. Tap <b>🎙 Record a meeting</b> at the start of your next meeting.</div>') + KEEP_NOTE) + '</div>';
     document.getElementById('back').onclick = A.home;
     document.getElementById('mt-ref').onclick = open;
     document.getElementById('mt-new').onclick = function () { startSheet(); };
@@ -509,7 +515,7 @@ var MINI = (function () {
       '<button class="btn red" id="mt-new" style="width:100%;min-height:58px;font-size:17px">🎙 Record: ' + esc(f.label) + '</button>' +
       '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording here</button>' +
       '<div class="section-title">' + (f.one ? 'Every meeting with ' + esc(f.label) : 'Every ' + esc(f.label)) + ' <span>' + f.list.length + '</span></div>' +
-      '<div class="alerts">' + f.list.map(rowHtml).join('') + '</div></div>';
+      '<div class="alerts">' + f.list.map(rowHtml).join('') + '</div>' + KEEP_NOTE + '</div>';
     document.getElementById('back').onclick = function () { cache.folder = null; paintList(cachedList()); };
     document.getElementById('mt-ref').onclick = refresh;
     document.getElementById('mt-new').onclick = function () { startSheet(preset); };

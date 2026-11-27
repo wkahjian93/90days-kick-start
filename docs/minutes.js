@@ -13,6 +13,7 @@
 var MINUTES = (function () {
   var PART_SECS_MAX = 900;                  // a part is about 5 minutes; 15 is the most accepted
   var MAX_PART_B64 = 14 * 1024 * 1024;      // about 10 MB of audio per part
+  var KEEP_DAYS = 90;                       // every meeting record (minutes, text, audio, tasks) is deleted this long after the meeting
   var MAX_SECS = 4 * 3600 + 600;            // 4 hours (+10 minutes slack)
   var AUDIO_OK = /^audio\/(webm|mp4|ogg|mpeg|aac|x-m4a|m4a|wav|x-wav)(;.*)?$/;
   var KEYWORDS = ['REDEFINE', 'Great Eastern', 'ANP', 'MAE', 'GreatPlanner', 'ePartner', 'Kick Start', 'joinfield', 'prospect', 'follow up', 'mini mini', 'referral', 'closing', 'presentation'];
@@ -267,7 +268,7 @@ var MINUTES = (function () {
   function light(store, m, me) {
     var s = parseObj(m.summary), tasks = store.load('mtasks').filter(function (t) { return t.meetingId === m.id; });
     var o = {id: m.id, title: m.title, series: str(m.series, 80), byName: m.byName, started: m.started, ended: m.ended, secs: +m.secs, status: m.status, people: m.people,
-      manage: canManage(m, me), next: parseObj(m.next), approved: m.approved, headline: s && s.summary && s.summary[0] || ''};
+      keepUntil: new Date(Date.parse(m.started) + KEEP_DAYS * 86400000).toISOString(), manage: canManage(m, me), next: parseObj(m.next), approved: m.approved, headline: s && s.summary && s.summary[0] || ''};
     if (o.manage) { o.tasksTotal = tasks.length; o.tasksDone = tasks.filter(function (t) { return C.truthy(t.done); }).length; o.err = m.err; }
     return o;
   }
@@ -414,12 +415,19 @@ var MINUTES = (function () {
 
   /* ---------- the 10-minute timer on the server ----------
      Finishes meetings even if the recorder's phone was closed: a recording with no new part for 30 minutes is stopped,
-     then waiting parts are transcribed and the summary written. Audio is deleted 30 days after approval. */
+     then waiting parts are transcribed and the summary written. Audio is deleted 30 days after approval.
+     The whole record (minutes, text, any audio left, the tasks sent from it) is deleted 90 days after the meeting. */
   function timer(store) {
-    var now = store.now(), stopped = 0, cleaned = 0;
+    var now = store.now(), stopped = 0, cleaned = 0, expired = 0;
     store.withLock(function () {
-      var rows = meetings(store), parts = store.load('mparts'), changedParts = false;
+      var rows = meetings(store), parts = store.load('mparts'), changedParts = false, old = {};
       rows.forEach(function (m) {
+        if (now - Date.parse(m.started) > KEEP_DAYS * 86400000) {   // 90 days after the meeting: everything goes, whatever its status
+          parts.forEach(function (p) { if (p.meetingId === m.id && p.fileId) { try { store.trashFile(p.fileId); } catch (e) {} } });
+          old[m.id] = 1; m.status = 'gone'; expired++;
+          C.log(store, 'mini mini', 'deleted meeting after ' + KEEP_DAYS + ' days', '', '', m.title);
+          return;
+        }
         if (m.status === 'recording' && now - Date.parse(m.updated || m.started) > 30 * 60000) {
           var mine = parts.filter(function (p) { return p.meetingId === m.id; });
           m.parts = mine.length; m.secs = mine.reduce(function (s, p) { return s + (+p.secs || 0); }, 0);
@@ -431,6 +439,10 @@ var MINUTES = (function () {
         }
         if (m.status === 'empty' && now - Date.parse(m.updated || m.started) > 7 * 86400000) m.status = 'gone';
       });
+      if (expired) {
+        parts = parts.filter(function (p) { return !old[p.meetingId]; }); changedParts = true;
+        store.save('mtasks', store.load('mtasks').filter(function (t) { return !old[t.meetingId]; }));
+      }
       if (changedParts) store.save('mparts', parts);
       store.save('meetings', rows.filter(function (m) { return m.status !== 'gone'; }));
     });
@@ -438,7 +450,7 @@ var MINUTES = (function () {
     meetings(store).filter(function (m) { return m.status === 'processing'; }).forEach(function (m) {
       try { process(store, m.id, null); done++; } catch (e) { /* tried again in 10 minutes */ }
     });
-    return {stopped: stopped, processed: done, audioDeleted: cleaned};
+    return {stopped: stopped, processed: done, audioDeleted: cleaned, expired: expired};
   }
 
   /* next meetings for REDEFINE Calendar (added to core.js calFeed) */

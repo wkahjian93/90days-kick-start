@@ -230,4 +230,22 @@ ok('folders: the name given at the start is kept as the fixed meeting name, and 
   assert(r.me && r.me.name);
 });
 
+ok('90 days after the meeting the whole record is deleted by itself: minutes, parts, audio and tasks; newer meetings stay', () => {
+  clock = new Date(clock.getTime() + 80 * 86400000);
+  const fresh = call({op: 'mtStart', code: L, title: 'Fresh', consent: true, people: [{id: ml.id}], different: true}).meeting;
+  call({op: 'mtPart', code: L, id: fresh.id, n: 0, mime: 'audio/mp4', secs: 60, b64: B64});
+  call({op: 'mtFinish', code: L, id: fresh.id, parts: 1, secs: 60});
+  const oldId = db.meetings.find(m => m.id !== fresh.id).id;
+  db.mtasks.push({id: 'TOLD', meetingId: oldId, agentId: ml.id, kind: 'task', text: 'old task', done: ''});
+  db.mtasks.push({id: 'TNEW', meetingId: fresh.id, agentId: ml.id, kind: 'task', text: 'new task', done: ''});
+  assert(call({op: 'mtList', code: L}).meetings[0].keepUntil);
+  clock = new Date(clock.getTime() + 11 * 86400000);
+  const t = MINUTES.timer(store);
+  assert(t.expired >= 3);
+  assert.deepEqual(db.meetings.map(m => m.id), [fresh.id]);
+  assert(db.mparts.every(p => p.meetingId === fresh.id) && db.mparts.length === 1);
+  assert.deepEqual(db.mtasks.map(t => t.id), ['TNEW']);
+  assert.equal(Object.keys(files).length, 1, 'only the fresh meeting\'s audio is left');
+});
+
 console.log('\nAll ' + pass + ' mini mini checks passed.');
