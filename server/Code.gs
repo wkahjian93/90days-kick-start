@@ -1023,7 +1023,7 @@ var MINUTES = (function () {
     var names = arr(m.people).map(function (x) { return x.name; }), words = wordList(C.settingsObj(store).words);
     var others = store.load('agents').filter(function (a) { return a.active !== false && a.active !== 'false'; }).map(function (a) { return a.name; });
     // the GM's words first, then who is in the meeting, the built-in terms, and the rest of the team while there is room
-    var r = store.transcribe({b64: f.b64, mime: p.mime, name: 'part' + (+p.n + 1) + '.' + (/mp4|m4a|aac/.test(p.mime) ? 'm4a' : 'webm'),
+    var r = store.transcribe({b64: f.b64, mime: p.mime, name: 'part' + (+p.n + 1) + '.' + (/mp4|m4a|aac/.test(p.mime) ? 'm4a' : /wav/.test(p.mime) ? 'wav' : /mpeg/.test(p.mime) ? 'mp3' : /ogg/.test(p.mime) ? 'ogg' : 'webm'),
       keywords: uniq(words.concat(names, KEYWORDS, others)).slice(0, 60),
       prompt: '马来西亚保险团队的会议/培训，华语为主，夹杂英语和马来语。Malaysian insurance agency meeting, mostly Mandarin with English and Malay.' + (names.length ? ' People: ' + names.join(', ') + '.' : '') + (words.length ? ' Team words: ' + words.join(', ') + '.' : '')});
     return str(r && r.text);

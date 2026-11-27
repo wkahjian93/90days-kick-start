@@ -278,7 +278,7 @@
     rerender();
   }
   function rerender() {
-    if (st.screen === 'rec' || st.screen === 'meeting' || st.screen === 'meetings') return;   // mini mini screens draw themselves
+    if (st.screen === 'rec' || st.screen === 'upload' || st.screen === 'meeting' || st.screen === 'meetings') return;   // mini mini screens draw themselves
     if (st.screen === 'team') goTeam();
     else if (st.screen === 'agent') goAgent(st.agentId, true);
     else if (st.screen === 'history') goHistory();

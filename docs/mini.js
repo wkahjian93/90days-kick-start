@@ -6,6 +6,7 @@ var MINI = (function () {
      and cuts quieter voices across the table, so it is off; auto volume stays on. 64 kbps keeps speech clear for the AI. */
   var MIC_ASK = {audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1}};
   var REC_BITS = 64000;
+  var STALL_MS = 25000;                    // no sound for this long = the phone has cut the microphone
   var PART_SECS = 300;                     // a new audio part every 5 minutes, sent while recording continues
   var MAX_SECS = 4 * 3600;                 // stops by itself at 4 hours
   var LS_REC = 'mm_rec';                   // the recording in progress (survives the app closing)
@@ -127,6 +128,125 @@ var MINI = (function () {
     record(stream, r.meeting.id, r.meeting.title, 0, 0);
   }
 
+  /* ---------- upload a recording made outside the app (iPhone Voice Memos records with the phone locked) ---------- */
+  var UP_RATE = 16000, UP_PART_SECS = 240;   // long files are cut into 4-minute parts of plain 16 kHz sound (about 7.7 MB each)
+  var UP_MAX_BYTES = 200 * 1024 * 1024, UP_WHOLE_BYTES = 8 * 1024 * 1024, UP_WHOLE_SECS = 890;
+  function fileMime(f) {
+    var t = String(f.type || '').toLowerCase().split(';')[0], x = (String(f.name || '').toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+    if (/^audio\/(webm|mp4|ogg|mpeg|aac|x-m4a|m4a|wav|x-wav)$/.test(t)) return t;
+    return {m4a: 'audio/mp4', mp4: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', webm: 'audio/webm'}[x] || '';
+  }
+  function fileSecs(f) {   // how long the recording is, without opening all of it (0 when the phone cannot tell)
+    return new Promise(function (res) {
+      var a = document.createElement('audio'), u = URL.createObjectURL(f), done = false;
+      function end(v) { if (done) return; done = true; try { URL.revokeObjectURL(u); } catch (e) {} res(isFinite(v) && v > 0 ? v : 0); }
+      a.preload = 'metadata'; a.onloadedmetadata = function () { end(a.duration); }; a.onerror = function () { end(0); };
+      setTimeout(function () { end(0); }, 8000); a.src = u;
+    });
+  }
+  function decodeFile(buf) {   // -> AudioBuffer, at 16 kHz where the phone allows it
+    var OC = window.OfflineAudioContext || window.webkitOfflineAudioContext, AC = window.AudioContext || window.webkitAudioContext, ctx;
+    try { ctx = new OC(1, 1, UP_RATE); } catch (e) { try { ctx = new AC(); } catch (e2) { return Promise.reject(new Error('no_audio')); } }
+    return new Promise(function (res, rej) {
+      var p = ctx.decodeAudioData(buf, res, function (e) { rej(e || new Error('decode')); });
+      if (p && p.catch) p.catch(function () {});
+    }).then(function (ab) { try { if (ctx.close) ctx.close(); } catch (e) {} return ab; });
+  }
+  // One part of the sound as a 16 kHz, one-channel WAV file. Channels are mixed; a faster recording is averaged down.
+  function wavPart(ab, from, to) {
+    var step = ab.sampleRate / UP_RATE, n = Math.max(0, Math.floor((to - from) * UP_RATE)), ch = [], c;
+    for (c = 0; c < ab.numberOfChannels; c++) ch.push(ab.getChannelData(c));
+    var out = new DataView(new ArrayBuffer(44 + n * 2)), i, j;
+    function w(o, s) { for (var k = 0; k < s.length; k++) out.setUint8(o + k, s.charCodeAt(k)); }
+    w(0, 'RIFF'); out.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+    out.setUint32(24, UP_RATE, true); out.setUint32(28, UP_RATE * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, 'data'); out.setUint32(40, n * 2, true);
+    var base = from * ab.sampleRate, len = ab.length;
+    for (i = 0; i < n; i++) {
+      var a = Math.floor(base + i * step), b = Math.min(len, Math.max(a + 1, Math.floor(base + (i + 1) * step))), sum = 0, cnt = 0;
+      for (j = a; j < b; j++) for (c = 0; c < ch.length; c++) { sum += ch[c][j]; cnt++; }
+      var v = cnt ? sum / cnt : 0; v = v > 1 ? 1 : v < -1 ? -1 : v;
+      out.setInt16(44 + i * 2, v < 0 ? v * 32768 : v * 32767, true);
+    }
+    return new Blob([out.buffer], {type: 'audio/wav'});
+  }
+  async function uploadSheet() {
+    if (REC) { recScreen(); return; }
+    await loadNames();
+    var me = A.st.me && A.st.me.id ? [{id: A.st.me.id, name: A.st.me.name}] : [];
+    A.sheet('<h3>⬆ Upload a recording</h3>' +
+      '<p class="note">For a meeting recorded outside this app, for example with <b>Voice Memos</b> on an iPhone (it keeps recording while the phone is locked). In Voice Memos: tap the recording → <b>…</b> → <b>Save to Files</b>, then choose it here.</p>' +
+      '<label class="f">The recording</label><input type="file" id="up-file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm">' +
+      '<div class="note" id="up-info"></div>' +
+      '<label class="f">Meeting name</label><input type="text" id="mt-title" maxlength="80" value="">' +
+      '<label class="f">Who was in this meeting?</label>' + peoplePicker(me, 'mp') +
+      (A.isGM() ? '' : '<div class="mtwarn">⚠️ <b>Please do not use this tool for non-REDEFINE purposes</b>, or the recording fees will be charged to you.' +
+        '<label class="check" style="border:0;padding:8px 0 0;align-items:flex-start"><input type="checkbox" id="mt-rule"> <span>I understand. This recording is for REDEFINE work.</span></label></div>') +
+      '<label class="check" style="border:0;margin-top:10px;align-items:flex-start"><input type="checkbox" id="mt-ok"> <span><b>Everyone in this recording knew it was being recorded</b> and agreed. The recording is used only to write the minutes, and the audio is deleted 30 days after the minutes are approved.</span></label>' +
+      '<p class="note">Long recordings are large to send: use Wi-Fi and keep the app open until it says all parts are sent. Up to 4 hours.</p>' +
+      '<div class="actions"><button class="btn red" id="mt-go" style="width:100%" disabled>⬆ Upload and write minutes</button></div>', function (el, close) {
+      bindPicker(el, 'mp');
+      var ok = el.querySelector('#mt-ok'), rule = el.querySelector('#mt-rule'), go = el.querySelector('#mt-go'), fi = el.querySelector('#up-file'), info = el.querySelector('#up-info'), ti = el.querySelector('#mt-title');
+      function check() { go.disabled = !fi.files[0] || !fileMime(fi.files[0]) || fi.files[0].size > UP_MAX_BYTES || !ok.checked || (rule && !rule.checked); }
+      ok.onchange = check; if (rule) rule.onchange = check;
+      fi.onchange = function () {
+        var f = fi.files[0]; info.textContent = '';
+        if (f) {
+          if (!fileMime(f)) info.textContent = '⚠️ This is not a sound file mini mini can read. Use m4a, mp3, wav, aac, ogg or webm.';
+          else if (f.size > UP_MAX_BYTES) info.textContent = '⚠️ This file is too big (over 200 MB).';
+          else info.textContent = (f.size / 1048576).toFixed(1) + ' MB';
+          if (!ti.value.trim()) ti.value = 'Meeting ' + new Date(f.lastModified || Date.now()).toLocaleDateString('en-MY', {day: 'numeric', month: 'short', timeZone: 'Asia/Kuala_Lumpur'});
+        }
+        check();
+      };
+      go.onclick = function () { var body = {title: ti.value.trim(), people: readPicker(el, 'mp'), consent: true, different: true}, f = fi.files[0]; close(); beginUpload(body, f); };
+    });
+  }
+  function upScreen(msg) {
+    A.st.screen = 'upload';
+    document.getElementById('app').innerHTML = A.topBar('Uploading', 'mini mini', '', '') +
+      '<div class="wrap"><div class="recbox paused"><div class="rectitle" id="up-msg">' + esc(msg) + '</div><div class="note">Keep the app open.</div></div></div>';
+  }
+  var uploading = false;
+  async function beginUpload(body, file) {
+    if (uploading || REC || !file) return;
+    uploading = true;
+    function say(t) { var e = document.getElementById('up-msg'); if (e) e.textContent = t; }
+    try {
+      upScreen('Reading the recording…');
+      var mime = fileMime(file), secs = await fileSecs(file), blobs = [], total = 0;
+      if (secs > MAX_SECS + 600) { A.toast('This recording is longer than 4 hours. Cut it into shorter recordings first.', true); open(); return; }
+      if (file.size <= UP_WHOLE_BYTES && secs && secs <= UP_WHOLE_SECS) {   // short and small: send it as it is
+        blobs.push({blob: file, mime: mime, secs: Math.round(secs)}); total = Math.round(secs);
+      } else {
+        var ab;
+        try { ab = await decodeFile(await file.arrayBuffer()); }
+        catch (e) { A.toast('This phone could not open the recording. Try a shorter recording, or upload it from a computer.', true); open(); return; }
+        total = Math.floor(ab.duration);
+        if (total > MAX_SECS + 600) { A.toast('This recording is longer than 4 hours. Cut it into shorter recordings first.', true); open(); return; }
+        if (total < 1) { A.toast('This recording is empty.', true); open(); return; }
+        for (var at = 0, k = 0; at < ab.duration; at += UP_PART_SECS, k++) {
+          var to = Math.min(ab.duration, at + UP_PART_SECS);
+          if (to - at < 1 && k) break;
+          say('Preparing part ' + (k + 1) + ' of ' + Math.ceil(ab.duration / UP_PART_SECS) + '…');
+          await new Promise(function (r) { setTimeout(r, 0); });   // let the screen update
+          blobs.push({blob: wavPart(ab, at, to), mime: 'audio/wav', secs: Math.round(to - at)});
+        }
+        ab = null;
+      }
+      say('Starting…');
+      var r;
+      try { r = await A.api('mtStart', body); } catch (e) { A.showErr(e); open(); return; }
+      var id = r.meeting.id, made = [];
+      for (var i = 0; i < blobs.length; i++) {
+        await putPart({k: id + '-' + i, id: id, n: i, mime: blobs[i].mime, secs: blobs[i].secs, marks: [], blob: blobs[i].blob, ready: true, at: Date.now()});
+        made.push(i);
+      }
+      lsSet(LS_REC, {id: id, title: r.meeting.title, n: blobs.length, secs: total, stopped: true, made: made});
+      pump();
+      await finish(id, blobs.length, total);
+    } finally { uploading = false; }
+  }
+
   /* ---------- the recorder ---------- */
   var REC = null;
   function pickMime() {
@@ -146,36 +266,41 @@ var MINI = (function () {
   // Every 10 seconds the part so far is kept on the phone, so closing the app loses at most 10 seconds.
   function newPart() {
     var opts = {audioBitsPerSecond: REC_BITS}; if (REC.mime) opts.mimeType = REC.mime;
-    var mr = new MediaRecorder(REC.stream, opts), chunks = [], n = REC.n, id = REC.id, started = Date.now(), marks = REC.marks = [];
+    var mr = new MediaRecorder(REC.stream, opts), chunks = [], n = REC.n, id = REC.id, started = Date.now(), last = started, marks = REC.marks = [];
     var mime = (REC.mime || 'audio/webm').split(';')[0];
     function save(ready) {
       if (!chunks.length) return Promise.resolve();
       mime = (mr.mimeType || mime).split(';')[0];
-      return putPart({k: id + '-' + n, id: id, n: n, mime: mime, secs: Math.min(Math.round((Date.now() - started) / 1000), 900), marks: marks.slice(), blob: new Blob(chunks, {type: mime}), ready: ready, at: Date.now()});
+      return putPart({k: id + '-' + n, id: id, n: n, mime: mime, secs: Math.min(Math.round((last - started) / 1000), 900), marks: marks.slice(), blob: new Blob(chunks, {type: mime}), ready: ready, at: Date.now()});
     }
     mr.ondataavailable = function (e) {
-      if (!e.data || !e.data.size) return;
-      chunks.push(e.data);
+      if (!e.data || !e.data.size || mr.dropIt) return;   // dropIt: the phone cut the microphone before this part got any sound
+      chunks.push(e.data); last = Date.now(); if (REC && REC.mr === mr) REC.lastData = last;
       var r = lsGet(LS_REC); if (r && r.id === id && (r.made || []).indexOf(n) < 0) { r.made = (r.made || []).concat([n]); lsSet(LS_REC, r); }
       if (mr.state === 'recording') save(false);
     };
     mr.onstop = function () { save(true).then(pump); };
     mr.start(10000);
-    REC.mr = mr; REC.partStart = started;
+    REC.mr = mr; REC.partStart = started; REC.lastData = started; REC.gotData = false;
+    mr.addEventListener('dataavailable', function (e) { if (e.data && e.data.size && REC && REC.mr === mr) REC.gotData = true; });
   }
   function elapsed() { return REC ? REC.before + (REC.paused ? 0 : Math.floor((Date.now() - REC.partStart) / 1000)) : 0; }
-  function micLive() { return REC && REC.stream && REC.stream.getAudioTracks().some(function (t) { return t.readyState === 'live'; }); }
+  function micLive() { return REC && REC.stream && REC.stream.getAudioTracks().some(function (t) { return t.readyState === 'live' && !t.muted; }); }
+  // No sound has arrived for a while (a chunk is due every 10 seconds): the phone has stopped the microphone without saying so.
+  function stalled() { return REC && !REC.paused && Date.now() - REC.lastData > STALL_MS && Date.now() - (REC.visAt || 0) > 2400; }
+  function rollPart() {   // close this part as a complete file and carry on in a new one
+    var old = REC.mr, inPart = (Date.now() - REC.partStart) / 1000;
+    REC.before += Math.round(inPart); REC.n++;
+    updRec({n: REC.n, secs: REC.before});
+    newPart(); try { old.stop(); } catch (e) {}
+  }
   function tickRec() {
     if (!REC) return;
     if (REC.paused) { paintRec(); return; }
-    if (!micLive()) { pauseRec('mic'); return; }   // the phone took the microphone away (lock, call, another app)
+    if (!micLive() || stalled()) { pauseRec('mic'); return; }   // the phone took the microphone away (lock, call, another app)
     var inPart = (Date.now() - REC.partStart) / 1000;
     if (elapsed() >= MAX_SECS) { stopRec(true); return; }
-    if (inPart >= PART_SECS) {   // send this part, carry on in a new one
-      var old = REC.mr; REC.before += Math.round(inPart); REC.n++;
-      updRec({n: REC.n, secs: REC.before});
-      newPart(); try { old.stop(); } catch (e) {}
-    }
+    if (inPart >= PART_SECS) rollPart();   // send this part, carry on in a new one
     paintRec();
   }
   // Keep the screen on: the Wake Lock (newer phones) plus a tiny silent looping video (works on iPhones where the Wake Lock does not).
@@ -199,16 +324,19 @@ var MINI = (function () {
     try { if (REC && REC.wake) REC.wake.release(); } catch (e) {}
     try { if (noSleep) { noSleep.pause(); noSleep.remove(); noSleep = null; } } catch (e) {}
   }
-  // The phone was locked or the app was left: close this part properly (so its audio file is complete), wait, then carry on.
+  // The phone took the microphone away: close this part properly (so its audio file is complete), wait, then carry on.
   function pauseRec(why) {
     if (!REC || REC.paused) return;
-    var inPart = Math.round((Date.now() - REC.partStart) / 1000), old = REC.mr;
-    REC.paused = Date.now(); REC.mr = null; REC.before += inPart;
+    var old = REC.mr, now = Date.now();
+    var at = now - REC.lastData > 15000 ? REC.lastData : now;   // sound stopped arriving earlier than now: count only up to then
+    var inPart = Math.max(0, Math.round((at - REC.partStart) / 1000));
+    if (!REC.gotData && at !== now) old.dropIt = true;   // this part never got any sound: do not send an empty file
+    REC.paused = at; REC.mr = null; REC.before += inPart;
     REC.n++;   // the next part gets a new number (numbers may skip; the server counts parts)
     updRec({n: REC.n, secs: REC.before});
     try { old.stop(); } catch (e) {}
     REC.gaps = (REC.gaps || 0) + 1;
-    if (why === 'mic' && document.visibilityState === 'visible') resumeRec();
+    if (document.visibilityState === 'visible') resumeRec();
     else paintRec();
   }
   async function resumeRec(byTap) {
@@ -221,12 +349,18 @@ var MINI = (function () {
     if (!REC || !REC.paused) return;
     var lost = Math.round((Date.now() - REC.paused) / 1000);
     REC.paused = 0; newPart(); wakeOn(); recScreen();
-    if (lost >= 3) A.toast('▶ Recording again. ' + mmss(lost) + ' was not recorded while the phone was locked.', true);
+    if (lost >= 3) A.toast('▶ Recording again. ' + mmss(lost) + ' was not recorded: the phone had stopped the microphone.', true);
   }
+  /* Screen locked or app left: the recording is NOT stopped. Everything so far is closed as a complete file, and a new part carries on.
+     Phones that allow recording in the background (most Android phones) keep going. An iPhone cuts the microphone itself;
+     that shows as a dead or silent microphone, and the recording then pauses and carries on when the app is back. */
   function onVis() {
     if (!REC) return;
-    if (document.visibilityState === 'visible') { wakeOn(); if (REC.paused) resumeRec(); }
-    else pauseRec('hidden');
+    if (document.visibilityState !== 'visible') { if (!REC.paused) { if (micLive() && !stalled()) rollPart(); else pauseRec('mic'); } return; }
+    wakeOn(); REC.visAt = Date.now();
+    if (REC.paused) { resumeRec(); return; }
+    // back in the app: give the recorder a moment to hand over what it has, then check that sound really kept arriving
+    setTimeout(function () { if (REC && !REC.paused && document.visibilityState === 'visible' && (!micLive() || stalled())) pauseRec('mic'); }, 2500);
   }
   function onLeave(e) { if (REC) { e.preventDefault(); e.returnValue = ''; } }
   function mark() { if (!REC || REC.paused) return; REC.marks.push(Math.floor((Date.now() - REC.partStart) / 1000)); A.toast('📌 Marked at ' + mmss(elapsed())); paintRec(); }
@@ -237,10 +371,10 @@ var MINI = (function () {
     document.getElementById('app').innerHTML = A.topBar(paused ? 'Paused' : 'Recording', 'mini mini', '', '') +
       '<div class="wrap"><div class="recbox' + (paused ? ' paused' : '') + '"><div class="recdot"></div><div class="rectime" id="rec-time">0:00</div><div class="rectitle">' + esc(REC.title) + '</div>' +
       '<div class="note" id="rec-sent"></div></div>' +
-      (paused ? '<div class="mtwarn" style="margin-top:14px">⏸ <b>Recording paused.</b> The phone was locked or the app was left, so the microphone stopped. Everything before this is kept.</div>' +
+      (paused ? '<div class="mtwarn" style="margin-top:14px">⏸ <b>Recording paused.</b> The phone stopped the microphone (screen locked, a call, or another app). Everything before this is kept.</div>' +
         '<div class="btn-row" style="margin-top:14px"><button class="btn gold" id="rec-go" style="min-height:64px;font-size:18px">▶ Continue recording</button><button class="btn red" id="rec-stop" style="min-height:64px;font-size:18px">■ Stop</button></div>'
       : '<div class="btn-row" style="margin-top:14px"><button class="btn ghost" id="rec-mark" style="min-height:64px;font-size:18px">📌 Mark this</button><button class="btn red" id="rec-stop" style="min-height:64px;font-size:18px">■ Stop</button></div>') +
-      '<div class="panel note" style="margin-top:14px"><b>Don\'t press the lock button</b> and stay in this app: the phone cannot record while it is locked. mini mini keeps the screen from locking by itself. If it does lock, unlock it and recording carries on.<br>Recording stops by itself at 4 hours. Say <b>"mini mini, …"</b> or tap <b>📌 Mark this</b> when something must go into the minutes.</div></div>';
+      '<div class="panel note" style="margin-top:14px">mini mini keeps the screen on. If the screen locks: most <b>Android</b> phones keep recording. An <b>iPhone</b> stops its microphone while locked, so unlock it and recording carries on by itself; the locked time is not recorded. Want the phone locked for the whole meeting? Record with the phone\'s own recorder (iPhone: Voice Memos), then use <b>⬆ Upload a recording</b>.<br>Recording stops by itself at 4 hours. Say <b>"mini mini, …"</b> or tap <b>📌 Mark this</b> when something must go into the minutes.</div></div>';
     var mk = document.getElementById('rec-mark'); if (mk) mk.onclick = mark;
     var gb = document.getElementById('rec-go'); if (gb) gb.onclick = function () { resumeRec(true); };
     document.getElementById('rec-stop').onclick = async function () { if (await A.confirmBox('Stop recording?', 'mini mini then writes the minutes. You can\'t add more to this recording afterwards.', 'Stop and write minutes')) stopRec(false); };
@@ -305,6 +439,7 @@ var MINI = (function () {
     document.getElementById('app').innerHTML = A.topBar('Meetings', 'mini mini', '<button class="icon" id="back">←</button>', '<button class="icon" id="mt-ref">↻</button>') +
       '<div class="wrap"><div id="mm-wait" class="note"></div>' +
       '<button class="btn red" id="mt-new" style="width:100%;min-height:58px;font-size:17px">🎙 Record a meeting</button>' +
+      '<button class="btn ghost" id="mt-up" style="width:100%;margin-top:8px">⬆ Upload a recording (e.g. iPhone Voice Memos)</button>' +
       (isAgent ? '<div class="section-title">My tasks from meetings <span>' + open.length + ' to do</span></div>' + tasksHtml(my, true) : '') +
       '<div class="section-title">' + (A.isGM() ? 'All meetings' : 'Meetings') + '</div>' +
       (r.meetings.length ? '<div class="alerts">' + r.meetings.map(function (m) {
@@ -316,6 +451,7 @@ var MINI = (function () {
     document.getElementById('back').onclick = A.home;
     document.getElementById('mt-ref').onclick = open;
     document.getElementById('mt-new').onclick = startSheet;
+    document.getElementById('mt-up').onclick = uploadSheet;
     document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt); }; });
     bindTicks(document.getElementById('app'));
     paintRec();

@@ -207,4 +207,16 @@ ok('team words: the GM\'s list is tidied, sent to the speech-to-text and the sum
   assert.equal(MINUTES.rules(store, [], false).includes('团队常用'), false);
 });
 
+ok('uploaded recording: WAV parts are accepted and sent to the speech-to-text with the right file name', () => {
+  const old = store.transcribe; const sent = []; store.transcribe = o => { sent.push(o); return {text: '好。'}; };
+  const m3 = call({op: 'mtStart', code: L, title: 'Upload', consent: true, people: [{id: ml.id}], different: true}).meeting;
+  call({op: 'mtPart', code: L, id: m3.id, n: 0, mime: 'audio/wav', secs: 240, b64: B64});
+  call({op: 'mtPart', code: L, id: m3.id, n: 1, mime: 'audio/mpeg', secs: 120, b64: B64});
+  call({op: 'mtFinish', code: L, id: m3.id, parts: 2, secs: 360});
+  const r = call({op: 'mtProcess', code: L, id: m3.id});
+  store.transcribe = old;
+  assert.deepEqual(sent.map(o => o.name + ' ' + o.mime), ['part1.wav audio/wav', 'part2.mp3 audio/mpeg']);
+  assert.equal(r.status, 'review');
+});
+
 console.log('\nAll ' + pass + ' mini mini checks passed.');

@@ -9,7 +9,8 @@
 - **Only one person records each meeting.** If someone is already recording, the app shows who it is. Same meeting? Don't record; you'll get the minutes anyway.
 
 ## During the meeting
-- Put the phone in the middle of the table and **keep the screen on, with the app open**. Don't lock the phone or switch apps; an iPhone stops recording when you do.
+- Put the phone in the middle of the table and **keep the screen on, with the app open**. If the screen locks, most Android phones keep recording. An iPhone stops its microphone while locked: unlock it and recording carries on by itself, but the locked time is not recorded.
+- **Want the phone locked for the whole meeting (iPhone)?** Record in **Voice Memos** instead. After the meeting: tap the recording → **…** → **Save to Files**. Then in the app: **Meetings → ⬆ Upload a recording**, choose the file, tick the boxes, **Upload and write minutes**. Use Wi-Fi for long recordings and keep the app open until all parts are sent. Up to 4 hours; if the phone cannot open a very long file, upload it from a computer.
 - Say **"mini mini, …"** when something must be noted, for example *"mini mini，记下来：Yi Ting 星期五前交 10 个 prospect"*. You can also tap **📌 Mark this**.
 - Say the next meeting date out loud, for example *"下次开会下个星期一晚上八点"*. mini mini picks it up.
 - Recording can run up to 4 hours. Every 5 minutes, the part recorded so far is sent to the server.
