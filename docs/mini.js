@@ -480,7 +480,7 @@ var MINI = (function () {
   }
   var KEEP_NOTE = '<p class="note" style="margin-top:12px">🗑 Every meeting record (minutes, tasks and recording) is deleted by itself 90 days after the meeting.</p>';
   function bindRows() {
-    document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt); }; });
+    document.querySelectorAll('[data-mt]').forEach(function (b) { b.onclick = function () { openMeeting(b.dataset.mt, false, true); }; });
     bindTicks(document.getElementById('app'));
     paintRec();
   }
@@ -505,6 +505,7 @@ var MINI = (function () {
     document.getElementById('mt-up').onclick = function () { uploadSheet(); };
     document.querySelectorAll('[data-folder]').forEach(function (b) { b.onclick = function () { cache.folder = b.dataset.folder; paintFolder(); }; });
     bindRows();
+    if (r) preload(r.meetings);
   }
   function paintFolder() {
     var f = folders(cachedList()).filter(function (x) { return x.key === cache.folder; })[0];
@@ -521,6 +522,7 @@ var MINI = (function () {
     document.getElementById('mt-new').onclick = function () { startSheet(preset); };
     document.getElementById('mt-up').onclick = function () { uploadSheet(preset); };
     bindRows();
+    preload(f.list);
   }
   function repaint() { if (A.st.screen !== 'meetings') return; if (cache.folder) paintFolder(); else paintList(cachedList()); }
   async function refresh() {
@@ -579,15 +581,51 @@ var MINI = (function () {
 
   /* ---------- one meeting ---------- */
   var polling = null;
-  async function openMeeting(id, watch) {
-    A.st.screen = 'meeting';
-    var r;
-    try { r = await A.api('mtGet', {id: id}); } catch (e) { A.showErr(e); open(); return; }
+  /* Meeting details are kept on the phone too (the last 12 opened or pre-loaded), so a meeting opens at once
+     and is then brought up to date. Nothing is repainted once the person has started tapping or typing. */
+  var det = {}, DET_MAX = 12, openTok = null, touched = false;
+  function detGet(id) { if (det[id]) return det[id]; var c = lsGet('mm_det'); return c && c.who === whoKey() && c.m && c.m[id] || null; }
+  function detSet(id, r) {
+    det[id] = r;
+    var c = lsGet('mm_det'); if (!c || c.who !== whoKey() || !c.m) c = {who: whoKey(), m: {}, o: []};
+    c.m[id] = r; c.o = (c.o || []).filter(function (x) { return x !== id; }); c.o.push(id);
+    while (c.o.length > DET_MAX) delete c.m[c.o.shift()];
+    lsSet('mm_det', c);
+  }
+  function detDrop(id) { delete det[id]; var c = lsGet('mm_det'); if (c && c.m && c.m[id]) { delete c.m[id]; c.o = (c.o || []).filter(function (x) { return x !== id; }); lsSet('mm_det', c); } }
+  // Fetch the details of the first few meetings on screen in the background, so tapping one shows it at once.
+  var preTok = null;
+  async function preload(list) {
+    var me = preTok = {}, ids = (list || []).slice(0, 6).map(function (m) { return m.id; }).filter(function (id) { return !det[id]; });
+    for (var i = 0; i < ids.length; i++) {
+      if (preTok !== me || A.st.screen !== 'meetings') return;
+      try { detSet(ids[i], await A.api('mtGet', {id: ids[i]}, {quiet: true})); } catch (e) { return; }
+    }
+  }
+  async function showMeeting(id, r, watch) {
     var m = r.meeting;
     if (m.status === 'processing' || (m.status === 'recording' && watch)) { waitScreen(id, m); return; }
-    if (r.manage && (m.status === 'review' || (m.status === 'approved' && A.st.editMt === id))) { await loadNames(); reviewScreen(r); return; }
+    if (r.manage && (m.status === 'review' || (m.status === 'approved' && A.st.editMt === id))) { await loadNames(); if (A.st.screen === 'meeting') reviewScreen(r); return; }
     viewScreen(r);
   }
+  // quick: show what the phone already has first (used when a meeting is tapped); otherwise always wait for the server.
+  async function openMeeting(id, watch, quick) {
+    A.st.screen = 'meeting'; polling = null;
+    var tok = openTok = {}, had = quick ? detGet(id) : null, r;
+    if (had) { await showMeeting(id, had, watch); touched = false; }
+    else {
+      var lm = ((cache.list && cache.list.meetings) || []).filter(function (x) { return x.id === id; })[0];
+      document.getElementById('app').innerHTML = A.topBar(lm ? lm.title : 'Meeting', 'mini mini', '<button class="icon" id="back">←</button>', '') +
+        '<div class="wrap"><div class="panel empty"><div class="spin" style="margin:0 auto 8px"></div>Opening…</div></div>';
+      document.getElementById('back').onclick = function () { openTok = null; open(); };
+    }
+    try { r = await A.api('mtGet', {id: id}, {quiet: true}); }
+    catch (e) { if (tok !== openTok) return; if (e.code === 'not_found' || e.code === 'forbidden') detDrop(id); if (!had || e.code === 'not_found' || e.code === 'forbidden') { A.showErr(e); open(); } return; }
+    detSet(id, r);
+    if (tok !== openTok || A.st.screen !== 'meeting') return;
+    if (!had || (!touched && JSON.stringify(r) !== JSON.stringify(had))) { polling = null; showMeeting(id, r, watch); }
+  }
+  ['input', 'pointerdown', 'keydown'].forEach(function (ev) { document.addEventListener(ev, function () { touched = true; }, true); });
 
   async function waitScreen(id, m) {
     document.getElementById('app').innerHTML = A.topBar(m.title, 'mini mini', '<button class="icon" id="back">←</button>', '') +
@@ -694,7 +732,7 @@ var MINI = (function () {
       };
       el.querySelector('#rv-del').onclick = async function () {
         if (!(await A.confirmBox('Delete this meeting?', 'The recording, the transcript, the minutes and every task sent from it are deleted. This cannot be undone.', 'Delete', true, 'DELETE'))) return;
-        try { await A.api('mtDelete', {id: m.id, confirm: true}); A.toast('Meeting deleted'); if (cache.list) setList(Object.assign({}, cache.list, {meetings: cache.list.meetings.filter(function (x) { return x.id !== m.id; })})); open(); } catch (e) { A.showErr(e); }
+        try { await A.api('mtDelete', {id: m.id, confirm: true}); A.toast('Meeting deleted'); detDrop(m.id); if (cache.list) setList(Object.assign({}, cache.list, {meetings: cache.list.meetings.filter(function (x) { return x.id !== m.id; })})); open(); } catch (e) { A.showErr(e); }
       };
     }
     paint();
@@ -719,7 +757,7 @@ var MINI = (function () {
       '<div class="note" style="margin-top:14px">Recorded by ' + esc(m.byName) + ' · ' + (m.people || []).map(function (p) { return esc(p.name); }).join(', ') + '</div></div>';
     document.getElementById('back').onclick = open;
     bindTicks(document.getElementById('app'));
-    var ed = document.getElementById('mt-edit'); if (ed) ed.onclick = function () { A.st.editMt = m.id; openMeeting(m.id); };
+    var ed = document.getElementById('mt-edit'); if (ed) ed.onclick = function () { A.st.editMt = m.id; openMeeting(m.id, false, true); };
     var rt = document.getElementById('mt-retry'); if (rt) rt.onclick = async function () { try { await A.api('mtRetry', {id: m.id}); openMeeting(m.id, true); } catch (e) { A.showErr(e); } };
   }
 
