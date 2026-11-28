@@ -3,6 +3,8 @@
      LEADER_CODE   required, at least 10 characters; the code you sign in with as leader
      OPENAI_API_KEY  for mini mini meeting minutes (typed in by the GM; never in the code)
      TRANSCRIBE_MODEL / SUMMARY_MODEL  optional; default gpt-transcribe and gpt-6.2-sol
+     LOGIN_API     REDEFINE Login address (agents sign in with phone + email + PIN)
+     LOGIN_KEY     REDEFINE Login read-only key (lets the 10-minute timer switch off terminated agents)
    Data is kept in a private Google Sheet "90Days Kick Start Data" and homework files in the
    Drive folder "90Days Kick Start Homework", one sub-folder per agent. Both are created by setup(). */
 
@@ -93,6 +95,24 @@ var GAS = (function () {
       return n;
     },
     now: function () { return new Date(); },
+    // REDEFINE Login: who is this token? {id, name, phone} for an active agent, else null.
+    centralCheck: function (token) {
+      var base = P.getProperty('LOGIN_API'); if (!base || !token) return null;
+      try {
+        var r = UrlFetchApp.fetch(base + '/api/check', {method: 'post', contentType: 'application/json', payload: JSON.stringify({token: token}), muteHttpExceptions: true});
+        if (r.getResponseCode() !== 200) return null;
+        var j = JSON.parse(r.getContentText() || '{}'); return j && j.ok && j.agent ? j.agent : null;
+      } catch (e) { console.warn('REDEFINE Login check failed: ' + e); return null; }
+    },
+    // The agent list (read-only key): [{id, name, phone, status}], or null when not set up or unreachable.
+    centralList: function () {
+      var base = P.getProperty('LOGIN_API'), key = P.getProperty('LOGIN_KEY'); if (!base || !key) return null;
+      try {
+        var r = UrlFetchApp.fetch(base + '/svc/agents', {headers: {'x-service-key': key}, muteHttpExceptions: true});
+        if (r.getResponseCode() !== 200) { console.warn('REDEFINE Login list: HTTP ' + r.getResponseCode()); return null; }
+        var j = JSON.parse(r.getContentText() || '{}'); return j && j.ok && j.agents ? j.agents : null;
+      } catch (e) { console.warn('REDEFINE Login list failed: ' + e); return null; }
+    },
     random: Math.random,
     hash: function (s) {
       return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)
@@ -154,6 +174,10 @@ function dailyReminders() {
 function minutesTimer() {
   var r = MINUTES.timer(GAS);
   if (r.stopped || r.processed || r.audioDeleted) console.log('mini mini: ' + JSON.stringify(r));
+  try {
+    var ll = GAS.centralList();
+    if (ll) { var ls = GAS.withLock(function () { return CORE.loginSync(GAS, ll); }); if (ls.changed) console.log('REDEFINE Login: ' + ls.removed + ' switched off, ' + ls.restored + ' brought back'); else if (ls.skipped) console.warn('REDEFINE Login sync skipped: ' + ls.skipped); }
+  } catch (e) { console.warn('REDEFINE Login sync failed: ' + e); }
 }
 
 /* Run once from the editor: creates the Sheet and Drive folder, asks for permissions, installs the 8am trigger. */

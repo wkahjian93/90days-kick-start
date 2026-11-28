@@ -277,7 +277,7 @@ var CORE = (function () {
     // introducer: id of the account that brought this agent in ('' = the GM directly)
     // kind: '' = new agent doing the 90 days | 'introducer' = senior account, no training board
     // pin: salted hash of the agent's 4-6 digit PIN ('' = no PIN yet); the PIN itself is never stored
-    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind', 'pin', 'calCode'],
+    agents: ['id', 'name', 'email', 'phone', 'start', 'code', 'active', 'created', 'note', 'grad', 'gradDate', 'gradNote', 'introducer', 'kind', 'pin', 'calCode', 'central', 'centralOff'],
     progress: ['agentId', 'itemId', 'status', 'checks', 'note', 'comment', 'files', 'updated', 'reviewed'],
     activity: ['agentId', 'wk', 'a', 'o', 'p', 'f', 'c', 'anp', 'updated'],
     settings: ['key', 'value'],
@@ -430,12 +430,92 @@ var CORE = (function () {
     });
   }
 
+  /* ---------- REDEFINE Login: same phone + email + PIN on every REDEFINE app ----------
+     The phone signs in with the login service and sends its token; the server asks the login service who it is
+     (store.centralCheck, outside the lock) and finds the linked account. First time: the account with the same
+     phone number is linked by itself; otherwise old name + old PIN links it; otherwise "I am new" makes one. */
+  function normPhone(p) { var d = String(p || '').replace(/\D/g, ''); if (d.charAt(0) === '0') d = '60' + d.slice(1); return /^60\d{8,10}$/.test(d) ? d : ''; }
+  function titleName(v) {
+    v = str(v, 60).replace(/\s+/g, ' ');
+    if (v !== v.toUpperCase()) return v;   // already typed with care: keep it
+    return v.toLowerCase().replace(/(^|[\s\-'(\/])([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); });
+  }
+  function signedAs(store, a) {
+    if (a.id === ownerId(store)) return {ok: true, code: a.code, role: 'leader'};
+    return {ok: true, code: a.code, role: 'agent', agent: publicAgent(a)};
+  }
+  function rlSignIn(q, store, ag) {
+    var aid = String(ag.id), rows = store.load('agents').map(cleanAgent), a;
+    var me = rows.filter(function (x) { return String(x.central || '') === aid; })[0];
+    if (me) { if (!me.active) fail('removed'); return signedAs(store, me); }
+    function link(x, how) {
+      if (x.central) fail('already_linked');
+      x.central = aid; x.centralOff = ''; if (!x.phone) x.phone = ag.phone || '';
+      store.save('agents', rows);
+      log(store, x.name, 'linked REDEFINE login', x.id, '', how);
+      return Object.assign(signedAs(store, x), {linked: true});
+    }
+    var same = rows.filter(function (x) { return x.active && !x.central && ag.phone && normPhone(x.phone) === ag.phone; });
+    if (same.length === 1) return link(same[0], 'same phone number');
+    if (q.oldName) {
+      if (store.fails(0) >= 20) fail('locked');
+      a = byName(rows, q.oldName);
+      if (!a || !a.pin || !/^\d{4,6}$/.test(String(q.oldPin || '')) || a.pin !== pinHash(store, a.id, String(q.oldPin))) { store.fails(1); fail('wrong_old'); }
+      if (!a.active) fail('removed');
+      return link(a, 'old name + PIN');
+    }
+    var nm = titleName(ag.name);
+    if (!q.create) {
+      return {ok: true, next: 'choose', name: nm, leaderName: settingsObj(store).leaderName || 'GM',
+        people: rows.filter(function (x) { return x.active && x.id !== ownerId(store); }).map(function (x) { return {id: x.id, name: x.name}; })
+          .sort(function (x, y) { return x.name.localeCompare(y.name); })};
+    }
+    if (byName(rows, nm)) fail('name_in_use');   // probably their old account
+    a = {id: 'A' + newId(store, 6), code: '', active: true, created: nowIso(store), name: '', email: '', phone: '', start: '', note: '', introducer: '', kind: q.kind === 'introducer' ? 'introducer' : '', pin: '', central: aid, centralOff: ''};
+    agentFields({name: nm, phone: ag.phone || '', start: a.kind ? '' : (q.start || today(store))}, a, true);
+    var intro = str(q.introducer, 20);
+    if (intro === ownerId(store)) intro = '';
+    if (intro) { if (!rows.some(function (x) { return x.id === intro && x.active; })) fail('bad_introducer'); a.introducer = intro; }
+    do { a.code = newId(store, 8); } while (rows.some(function (x) { return x.code === a.code; }));
+    rows.push(a);
+    store.save('agents', rows);
+    var by = rows.filter(function (x) { return x.id === a.introducer; })[0];
+    log(store, a.name, a.kind ? 'joined as introducer (REDEFINE login)' : 'joined (REDEFINE login)', a.id, '', (a.kind ? '' : 'start ' + a.start) + (by ? ', introduced by ' + by.name : ''));
+    return Object.assign(signedAs(store, a), {created: true});
+  }
+  // Every 10 minutes on the server: an account whose login was terminated or deleted is switched off; a login
+  // restored brings back only the accounts this switched off (never one the GM switched off by hand).
+  // Safety: an empty list, or a list with none of the linked logins, changes nothing.
+  function loginSync(store, list) {
+    var none = function (why) { return {changed: 0, removed: 0, restored: 0, skipped: why || ''}; };
+    if (!list || !list.length) return none('empty');
+    var byId = {}; list.forEach(function (x) { byId[String(x.id)] = x; });
+    var rows = store.load('agents').map(cleanAgent), linked = rows.filter(function (x) { return x.central; });
+    if (!linked.length) return none();
+    if (linked.length >= 2 && !linked.some(function (x) { return byId[String(x.central)]; })) return none('no_match');
+    var off = [], back = 0;
+    linked.forEach(function (x) {
+      var l = byId[String(x.central)], on = !!l && l.status === 'active';
+      if (!on && x.active) { x.active = false; x.centralOff = '1'; off.push(x.name); }
+      else if (on && !x.active && x.centralOff === '1') { x.active = true; x.centralOff = ''; back++; }
+    });
+    if (!off.length && !back) return none();
+    store.save('agents', rows);
+    if (off.length) log(store, 'REDEFINE Login', 'switched off (login terminated)', '', '', off.join(', '));
+    return {changed: off.length + back, removed: off.length, restored: back};
+  }
+
   function handle(q, store) {
     if (!q || typeof q !== 'object') fail('invalid_request');
     if (q.op === 'ping') return {ok: true, app: 'REDEFINE Meeting App', syllabus: SYLLABUS_VERSION};
+    if (q.op === 'rlsignin') {
+      var lg = store.centralCheck ? store.centralCheck(str(q.rltoken, 200)) : null;
+      if (!lg || !lg.id) fail('login_failed');
+      return store.withLock(function () { return rlSignIn(q, store, lg); });
+    }
     if (q.op === 'signin') return store.withLock(function () { return signinPin(q, store); });
-    if (q.op === 'joinInfo') return store.withLock(function () { return joinInfo(q, store); });
-    if (q.op === 'signup') return signup(q, store);
+    if (q.op === 'joinInfo') { if (store.prop('LOGIN_API')) fail('use_login'); return store.withLock(function () { return joinInfo(q, store); }); }
+    if (q.op === 'signup') { if (store.prop('LOGIN_API')) fail('use_login'); return signup(q, store); }
     if (q.op === 'calFeed') return calFeed(q, store);   // REDEFINE Calendar collects with a personal link code
     var me = who(q, store);
     if (minutesMod && minutesMod.OPS[q.op]) { if (me.agent) cleanAgent(me.agent); return minutesMod.handle(q, store, me); }   // mini mini meeting minutes (minutes.js)
@@ -899,7 +979,7 @@ var CORE = (function () {
     minutesMod = M;
   }
 
-  return {handle: handle, useMinutes: useMinutes, TABLES: TABLES, JSON_COLS: JSON_COLS, sendReminders: sendReminders, settingsObj: settingsObj, syllabus: syllabus, defaultDue: defaultDue};
+  return {handle: handle, loginSync: loginSync, useMinutes: useMinutes, TABLES: TABLES, JSON_COLS: JSON_COLS, sendReminders: sendReminders, settingsObj: settingsObj, syllabus: syllabus, defaultDue: defaultDue};
 })();
 
 
@@ -1412,6 +1492,8 @@ if (typeof CORE !== 'undefined' && CORE.useMinutes) CORE.useMinutes(MINUTES);
      LEADER_CODE   required, at least 10 characters; the code you sign in with as leader
      OPENAI_API_KEY  for mini mini meeting minutes (typed in by the GM; never in the code)
      TRANSCRIBE_MODEL / SUMMARY_MODEL  optional; default gpt-transcribe and gpt-6.2-sol
+     LOGIN_API     REDEFINE Login address (agents sign in with phone + email + PIN)
+     LOGIN_KEY     REDEFINE Login read-only key (lets the 10-minute timer switch off terminated agents)
    Data is kept in a private Google Sheet "90Days Kick Start Data" and homework files in the
    Drive folder "90Days Kick Start Homework", one sub-folder per agent. Both are created by setup(). */
 
@@ -1502,6 +1584,24 @@ var GAS = (function () {
       return n;
     },
     now: function () { return new Date(); },
+    // REDEFINE Login: who is this token? {id, name, phone} for an active agent, else null.
+    centralCheck: function (token) {
+      var base = P.getProperty('LOGIN_API'); if (!base || !token) return null;
+      try {
+        var r = UrlFetchApp.fetch(base + '/api/check', {method: 'post', contentType: 'application/json', payload: JSON.stringify({token: token}), muteHttpExceptions: true});
+        if (r.getResponseCode() !== 200) return null;
+        var j = JSON.parse(r.getContentText() || '{}'); return j && j.ok && j.agent ? j.agent : null;
+      } catch (e) { console.warn('REDEFINE Login check failed: ' + e); return null; }
+    },
+    // The agent list (read-only key): [{id, name, phone, status}], or null when not set up or unreachable.
+    centralList: function () {
+      var base = P.getProperty('LOGIN_API'), key = P.getProperty('LOGIN_KEY'); if (!base || !key) return null;
+      try {
+        var r = UrlFetchApp.fetch(base + '/svc/agents', {headers: {'x-service-key': key}, muteHttpExceptions: true});
+        if (r.getResponseCode() !== 200) { console.warn('REDEFINE Login list: HTTP ' + r.getResponseCode()); return null; }
+        var j = JSON.parse(r.getContentText() || '{}'); return j && j.ok && j.agents ? j.agents : null;
+      } catch (e) { console.warn('REDEFINE Login list failed: ' + e); return null; }
+    },
     random: Math.random,
     hash: function (s) {
       return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)
@@ -1563,6 +1663,10 @@ function dailyReminders() {
 function minutesTimer() {
   var r = MINUTES.timer(GAS);
   if (r.stopped || r.processed || r.audioDeleted) console.log('mini mini: ' + JSON.stringify(r));
+  try {
+    var ll = GAS.centralList();
+    if (ll) { var ls = GAS.withLock(function () { return CORE.loginSync(GAS, ll); }); if (ls.changed) console.log('REDEFINE Login: ' + ls.removed + ' switched off, ' + ls.restored + ' brought back'); else if (ls.skipped) console.warn('REDEFINE Login sync skipped: ' + ls.skipped); }
+  } catch (e) { console.warn('REDEFINE Login sync failed: ' + e); }
 }
 
 /* Run once from the editor: creates the Sheet and Drive folder, asks for permissions, installs the 8am trigger. */

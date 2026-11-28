@@ -430,4 +430,48 @@ ok('locks out after 20 wrong codes', () => {
   failsN = 20; err({op: 'login', code: L}, 'locked'); failsN = 0;
 });
 
+ok('REDEFINE Login: phone auto-link, old name + PIN, new account, no duplicates, terminate + restore', () => {
+  const T = {t1: {id: 'L1', name: 'PHONE MATCH', phone: '60161112222'}, t2: {id: 'L2', name: 'OLD PIN PERSON', phone: '60169990000'},
+    t3: {id: 'L3', name: 'NUR AINA BINTI ALI', phone: '60163334444'}, t4: {id: 'L4', name: 'OLD PIN PERSON', phone: '60165556666'}, t9: {id: 'L9', name: 'Boss', phone: '60190000000'}};
+  const saved = {prop: store.prop, cc: store.centralCheck};
+  store.prop = k => k === 'LEADER_CODE' ? L : k === 'LOGIN_API' ? 'https://login.test' : '';
+  store.centralCheck = t => T[t] || null;
+  try {
+    const pm = call({op: 'addAgent', code: L, name: 'Phone Match Person', phone: '016-111 2222', start: '2026-11-01'}).agent;
+    const op = call({op: 'addAgent', code: L, name: 'Old Pin Person', start: '2026-11-01'}).agent;
+    call({op: 'setPin', code: op.code, pin: '2580'});
+    err({op: 'rlsignin', rltoken: 'nope'}, 'login_failed');
+    const a = call({op: 'rlsignin', rltoken: 't1'});
+    assert.ok(a.linked && a.agent.name === 'Phone Match Person' && a.code === pm.code, 'same phone links by itself');
+    assert.ok(!call({op: 'rlsignin', rltoken: 't1'}).linked, 'next time it just signs in');
+    const c = call({op: 'rlsignin', rltoken: 't2'});
+    assert.equal(c.next, 'choose'); assert.ok(c.people.some(p => p.name === 'Old Pin Person'));
+    err({op: 'rlsignin', rltoken: 't2', oldName: 'Old Pin Person', oldPin: '1111'}, 'wrong_old'); failsN = 0;
+    const o = call({op: 'rlsignin', rltoken: 't2', oldName: 'old pin person', oldPin: '2580'});
+    assert.ok(o.linked && o.code === op.code, 'old name + PIN links the old account');
+    err({op: 'rlsignin', rltoken: 't3', oldName: 'Old Pin Person', oldPin: '2580'}, 'already_linked');
+    err({op: 'rlsignin', rltoken: 't4', create: true}, 'name_in_use');
+    const n = call({op: 'rlsignin', rltoken: 't3', create: true, introducer: pm.id, start: '2026-11-04'});
+    assert.ok(n.created && n.agent.name === 'Nur Aina Binti Ali' && n.agent.introducer === pm.id && n.agent.start === '2026-11-04');
+    assert.equal(call({op: 'rlsignin', rltoken: 't3', create: true}).created, undefined, 'no duplicate on the next sign-in');
+    assert.equal(db.agents.filter(x => x.central === 'L3').length, 1);
+    err({op: 'signup', team: 'x', name: 'Someone', pin: '1234'}, 'use_login');
+    err({op: 'joinInfo', team: 'x'}, 'use_login');
+    // terminate L3 at the login: switched off, its code stops working; restore brings it back
+    const act = (id, on) => ({id, status: on ? 'active' : 'archived'});
+    assert.equal(CORE.loginSync(store, []).skipped, 'empty');
+    assert.equal(CORE.loginSync(store, [act('ZZ', true)]).skipped, 'no_match');
+    assert.equal(CORE.loginSync(store, [act('L1', true), act('L2', true), act('L3', false)]).removed, 1);
+    err({op: 'mine', code: n.code}, 'unauthorized');
+    err({op: 'rlsignin', rltoken: 't3'}, 'removed');
+    assert.equal(CORE.loginSync(store, [act('L1', true), act('L2', true), act('L3', true)]).restored, 1);
+    assert.ok(call({op: 'mine', code: n.code}).agent);
+    // the owner's own account signs in as GM
+    const me = db.agents.filter(x => x.id === pm.id)[0];
+    call({op: 'setOwner', code: L, id: pm.id, pin: '864209'});
+    assert.equal(call({op: 'rlsignin', rltoken: 't1'}).role, 'leader');
+    call({op: 'setOwner', code: L, id: ''}); void me;
+  } finally { store.prop = saved.prop; store.centralCheck = saved.cc; failsN = 0; }
+});
+
 console.log('\nAll ' + pass + ' checks passed.');

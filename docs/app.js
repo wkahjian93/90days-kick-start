@@ -1,6 +1,7 @@
 /* REDEFINE Meeting App (includes the 90 Days Kick Start training): leader dashboard, agent board, homework cards. */
 (function () {
   var API = (window.KS_CONFIG && window.KS_CONFIG.api) || '';
+  var LOGIN = (window.KS_CONFIG && window.KS_CONFIG.loginApi) || '';   // REDEFINE Login: same phone + email + PIN on every app
   var $app = document.getElementById('app');
   // view: 'mine' (an agent's own board) or 'team' (an agent looking after their recruits); the GM is always 'team'
   var st = {demo: false, code: '', role: '', data: null, screen: '', agentId: '', tab: 'board', view: 'mine', me: null, teamSize: 0};
@@ -27,6 +28,13 @@
     bad_due: 'Due day must be a number from 1 to 365.', bad_link: 'A link must start with http:// or https://',
     invalid_request: 'The server did not accept that. If you just updated the app, the Google server may need its new version.', confirm_required: 'Please confirm first.', consent_required: 'Tick that everyone knows the meeting is being recorded.',
     meeting_closed: 'This recording has already been stopped.', meeting_not_ready: 'The minutes are not ready yet.', ai_no_key: 'mini mini is not switched on yet: the OpenAI key is missing on the server.', unmatched_people: 'Choose who each person is first.', daily_limit: 'Daily limit reached. Try tomorrow.',
+    login_failed: 'Please sign in again. 请重新登入。', wrong_old: 'That old name or old PIN is not right. Ask your GM if you forgot. 旧名字或旧 PIN 不对。',
+    name_in_use: 'An account with your name is already here. Choose “I used the Meeting App before”. 已有你的名字，请选“我以前用过”。',
+    already_linked: 'That old account is already linked to another login. Ask your GM. 这个旧账号已被别人连接。', removed: 'Your account was switched off. Ask your GM. 账号已停用。',
+    use_login: 'New accounts are made with your REDEFINE login now. 新账号请用 REDEFINE 登入。',
+    no_match: 'Phone, email or PIN is not right. 资料不对，请再试一次。', wrong: 'Wrong PIN or code. 密码或验证码不对。',
+    code_expired: 'This code has expired. Ask your leader for a new code. 验证码已过期，请向领导要新的。', pin_too_simple: 'That PIN is too easy to guess. Choose another. PIN 太容易猜，请换一个。',
+    offline: 'No connection. Check your internet. 没有网络。',
     minutes_limit: 'Today\'s AI minutes for the team are used up, so recording has stopped. Everything recorded before this still gets its minutes. Try again tomorrow, or ask the GM to raise the daily limit.'
   };
 
@@ -126,8 +134,109 @@
       '<h2 class="appname">REDEFINE<br>Meeting App</h2>' + inner + '</div></div>';
   }
 
+  /* ---------- REDEFINE Login (phone + email + PIN): the phone signs in with the login service, then this server
+     finds the linked account. First time: same phone number links by itself; else old name + PIN, or "I am new". ---------- */
+  var RL = {phone: '', email: '', code: '', token: ''};
+  function rlStored() { return ls('rl.token') || ''; }
+  function rlPost(path, data) {
+    return fetch(LOGIN + path, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(data || {})})
+      .then(function (r) { return r.json().catch(function () { return {ok: false, error: 'offline'}; }); }, function () { return {ok: false, error: 'offline'}; });
+  }
+  function rlMsg(code, left) { return (ERR[code] || 'Could not sign in (' + code + ').') + (code === 'wrong' && left != null ? ' (' + left + ' tries left 次)' : ''); }
+  function renderRl(msg) {
+    st.screen = 'login';
+    var have = rlStored(), nm = ls('rl.agent') || '';
+    $app.innerHTML = loginShell(
+      '<p>Sign in with your <b>REDEFINE login</b>, the same on every REDEFINE app. You stay signed in on this phone.<br>用 REDEFINE 登入，所有应用都一样。</p>' +
+      (have ? '<button class="btn gold" id="rlcont">Continue as ' + esc(nm || 'me') + ' 继续</button><div class="fine" style="margin:-4px 0 10px">or sign in below 或在下面登入</div>' : '') +
+      '<label class="lf">Phone number 手机号码</label><input id="rlphone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 012-345 6789" value="' + esc(RL.phone) + '">' +
+      '<label class="lf">Email 电邮</label><input id="rlemail" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" value="' + esc(RL.email) + '">' +
+      '<label class="lf">PIN, or the 6-digit code from your leader 或验证码</label><input id="rlsecret" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password">' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div>' +
+      '<button class="btn ' + (have ? 'ghost' : 'gold') + '" id="rlgo">Sign in 登入</button>' +
+      '<div class="fine"><b>Forgot your PIN?</b> Ask your leader for a new code. 忘记 PIN？请向领导要新的验证码。</div>' +
+      '<div class="fine" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><a href="#" id="rlold">GM: sign in with leader code / old way</a><a href="#" id="demo">Try the sample</a></div>');
+    var go = document.getElementById('rlgo'), sec = document.getElementById('rlsecret');
+    go.onclick = function () { rlGo(document.getElementById('rlphone').value.trim(), document.getElementById('rlemail').value.trim(), sec.value.trim()); };
+    sec.onkeydown = function (e) { if (e.key === 'Enter') go.onclick(); };
+    if (have) document.getElementById('rlcont').onclick = function () { RL.token = have; rlFinish(); };
+    document.getElementById('rlold').onclick = function (e) { e.preventDefault(); renderLogin('', 'old'); };
+    document.getElementById('demo').onclick = function (e) { e.preventDefault(); chooseDemoRole(); };
+  }
+  async function rlGo(phone, email, secret) {
+    RL.phone = phone; RL.email = email;
+    if (!phone || !email || !secret) { renderRl('Enter your phone, email and PIN. 请填写手机、电邮和 PIN。'); return; }
+    busy(true); var r = await rlPost('/api/login', {phone: phone, email: email, secret: secret}); busy(false);
+    if (r.ok && r.next === 'set_pin') { RL.code = secret; renderRlPin(); return; }
+    if (r.ok && r.token) { rlGot(r); return; }
+    renderRl(rlMsg(r.error, r.left));
+  }
+  function renderRlPin(msg) {
+    $app.innerHTML = loginShell('<p><b>Choose your own 6-digit PIN.</b> The same PIN works on every REDEFINE app.<br>设定你自己的 6 位数 PIN，所有应用都用这个。</p>' +
+      '<label class="lf">New PIN 新 PIN</label><input id="rlp1" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<label class="lf">Type it again 再输入一次</label><input id="rlp2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password">' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div><button class="btn gold" id="rlsave">Save PIN 保存</button>');
+    document.getElementById('rlsave').onclick = async function () {
+      var a = document.getElementById('rlp1').value.trim(), b = document.getElementById('rlp2').value.trim();
+      if (a !== b) { renderRlPin('The two PINs are not the same. 两次 PIN 不一样。'); return; }
+      busy(true); var r = await rlPost('/api/set-pin', {phone: RL.phone, email: RL.email, code: RL.code, pin: a}); busy(false);
+      if (r.ok && r.token) { RL.code = ''; rlGot(r); return; }
+      if (r.error === 'code_expired' || r.error === 'no_match' || r.error === 'wrong') { renderRl(rlMsg(r.error)); return; }
+      renderRlPin(r.error === 'pin_format' ? 'PIN must be 6 digits. PIN 必须是 6 位数。' : rlMsg(r.error));
+    };
+  }
+  function rlGot(r) { ls('rl.token', r.token); ls('rl.agent', (r.agent && r.agent.name) || ''); RL.token = r.token; rlFinish(); }
+  async function rlFinish(extra) {
+    try {
+      st.code = '';
+      var r = await api('rlsignin', Object.assign({rltoken: RL.token}, extra || {}));
+      if (r.next === 'choose') { renderRlChoose(r); return; }
+      if (r.created) toast('Welcome, ' + r.agent.name + '!'); else if (r.linked) toast('Linked! Welcome back.');
+      RL.token = '';
+      signIn(r.code, false);
+    } catch (e) {
+      if (e.code === 'login_failed') { ls('rl.token', null); ls('rl.agent', null); }
+      if (extra && extra.oldName) { renderRlOld(ERR[e.code] || 'Could not link.'); return; }
+      renderRl(ERR[e.code] || 'Sign-in failed.');
+    }
+  }
+  function renderRlChoose(info) {
+    $app.innerHTML = loginShell('<p><b>First time with your REDEFINE login.</b> 第一次用 REDEFINE 登入。</p>' +
+      '<button class="btn gold" id="rlwasold">I used the Meeting App before 我以前用过</button>' +
+      '<div class="fine" style="margin:-4px 0 14px">Keeps all your records. Type your OLD name + OLD PIN once. 保留记录，只需输入一次旧名字和旧 PIN。</div>' +
+      '<button class="btn ghost" id="rlisnew">I am new 我是新来的</button>' +
+      '<div class="fine"><a href="#" id="rlback">← Back 返回</a></div>');
+    document.getElementById('rlwasold').onclick = function () { renderRlOld(''); };
+    document.getElementById('rlisnew').onclick = function () { renderRlNew(info, ''); };
+    document.getElementById('rlback').onclick = function (e) { e.preventDefault(); renderRl(); };
+    RL.info = info;
+  }
+  function renderRlOld(msg) {
+    $app.innerHTML = loginShell('<p><b>Your OLD Meeting App sign-in</b> (one time only). 输入你以前的名字和 PIN（只需一次）。</p>' +
+      '<label class="lf">Old name 旧名字</label><input id="rlon" autocapitalize="words" maxlength="60">' +
+      '<label class="lf">Old PIN 旧 PIN</label><input id="rlop" type="password" inputmode="numeric" maxlength="6">' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div><button class="btn gold" id="rllink">Link my account 连接</button>' +
+      '<div class="fine">Forgot it? Ask your GM. 忘记了？请问 GM。 <a href="#" id="rlback">← Back 返回</a></div>');
+    document.getElementById('rllink').onclick = function () { rlFinish({oldName: document.getElementById('rlon').value.trim(), oldPin: document.getElementById('rlop').value.trim()}); };
+    document.getElementById('rlback').onclick = function (e) { e.preventDefault(); if (RL.info) renderRlChoose(RL.info); else renderRl(); };
+  }
+  function renderRlNew(info, msg) {
+    var opts = (info.people || []).map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.name) + '</option>'; }).join('');
+    $app.innerHTML = loginShell('<p><b>Welcome, ' + esc(info.name) + '!</b> A few details. 欢迎！填写几个资料。</p>' +
+      '<label class="lf">I am</label><select id="rlkind"><option value="">A new agent: start my 90 Days Kick Start</option><option value="introducer">An existing agent: no 90 days training (meetings + my recruits)</option></select>' +
+      '<div id="rlstartwrap"><label class="lf">My start date (day 1)</label><input id="rlstart" type="date" value="' + esc(KS.todayMYT()) + '"></div>' +
+      '<label class="lf">Who introduced me?</label><select id="rlintro"><option value="">' + esc(info.leaderName || 'GM') + ' (GM) directly</option>' + opts + '</select>' +
+      '<div class="err" id="err">' + esc(msg || '') + '</div><button class="btn gold" id="rlcreate">Start 开始</button>' +
+      '<div class="fine"><a href="#" id="rlback">← Back 返回</a></div>');
+    var v = function (k) { return document.getElementById('rl' + k).value.trim(); };
+    document.getElementById('rlkind').onchange = function () { document.getElementById('rlstartwrap').classList.toggle('hidden', v('kind') === 'introducer'); };
+    document.getElementById('rlback').onclick = function (e) { e.preventDefault(); renderRlChoose(info); };
+    document.getElementById('rlcreate').onclick = function () { rlFinish({create: true, kind: v('kind'), start: v('start'), introducer: v('intro')}); };
+  }
+
   function renderLogin(msg, mode) {
     st.screen = 'login';
+    if (LOGIN && API && !st.demo && mode !== 'old' && mode !== 'code') { renderRl(msg); return; }
     if (!API && !st.demo) {
       $app.innerHTML = loginShell('<p>Your first 90 days, step by step. Training, homework and progress in one place.</p>' +
         '<button class="btn gold" id="demo">Open the sample (no code needed)</button>' +
@@ -144,7 +253,8 @@
           '<input id="lpin" placeholder="PIN (4–6 digits)" type="password" inputmode="numeric" maxlength="6" autocomplete="current-password">') +
       '<div class="err" id="err">' + esc(msg || '') + '</div>' +
       '<button class="btn gold" id="go">Sign in</button>' +
-      (codeMode ? '' : '<button class="btn ghost" id="join">New here? Create my account</button>') +
+      (codeMode || (LOGIN && !st.demo) ? '' : '<button class="btn ghost" id="join">New here? Create my account</button>') +
+      (LOGIN && API && !st.demo ? '<div class="fine"><a href="#" id="rlnew">← Agents: sign in with REDEFINE login</a></div>' : '') +
       '<div class="fine" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
         '<a href="#" id="swap">' + (codeMode ? '← Sign in with name + PIN' : 'Sign in with a code instead (GM, or no PIN yet)') + '</a>' +
         '<a href="#" id="demo">Try the sample</a></div>' +
@@ -159,9 +269,10 @@
       var nm = document.getElementById('lname'), pn = document.getElementById('lpin');
       go.onclick = function () { pinSignIn(nm.value.trim(), pn.value.trim()); };
       pn.onkeydown = function (e) { if (e.key === 'Enter') go.onclick(); };
-      document.getElementById('join').onclick = function () { renderJoin(); };
+      var jb = document.getElementById('join'); if (jb) jb.onclick = function () { renderJoin(); };
     }
-    document.getElementById('swap').onclick = function (e) { e.preventDefault(); renderLogin('', codeMode ? '' : 'code'); };
+    document.getElementById('swap').onclick = function (e) { e.preventDefault(); renderLogin('', codeMode ? 'old' : 'code'); };
+    var rn = document.getElementById('rlnew'); if (rn) rn.onclick = function (e) { e.preventDefault(); renderRl(); };
     document.getElementById('demo').onclick = function (e) { e.preventDefault(); chooseDemoRole(); };
   }
 
@@ -257,6 +368,7 @@
   }
   function signOut() {
     if (MINI.recording()) { toast('Stop the recording first.', true); return; }
+    var rt = rlStored(); if (rt && LOGIN) { rlPost('/api/logout', {token: rt}); ls('rl.token', null); ls('rl.agent', null); }
     ls('ks_code', null); ls('mm_list', null); ls('mm_det', null); st = {demo: false, code: '', role: '', data: null, view: 'mine', me: null, teamSize: 0}; if (window.APP) window.APP.st = st; renderLogin();
   }
 
@@ -622,13 +734,13 @@
       '<button class="btn ghost" data-m="meet">🎙 Meetings (mini mini)</button>' +
       (st.view === 'team' ? (st.me && st.me.kind !== 'introducer' ? '<button class="btn ghost" data-m="mine">📘 My 90 Days</button>' : '') : '<button class="btn ghost" data-m="team">👥 My recruits' + (st.teamSize ? ' (' + st.teamSize + ')' : '') + '</button>') +
       (st.view === 'team' ? '<button class="btn ghost" data-m="history">🕘 History of my recruits</button>' : '') +
-      '<button class="btn ghost" data-m="pin">🔑 ' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</button>' +
+      (LOGIN ? '' : '<button class="btn ghost" data-m="pin">🔑 ' + (st.me && st.me.hasPin ? 'Change my PIN' : 'Set my PIN') + '</button>') +
       '<button class="btn ghost" data-m="cal">📅 Connect my REDEFINE Calendar</button>' +
       '<button class="btn ghost" data-m="install">📲 Add to home screen</button>' +
       '<button class="btn ghost" data-m="out">Sign out</button></div>', function (el, close) {
       el.querySelector('[data-m=refresh]').onclick = function () { close(); refresh(); };
       el.querySelector('[data-m=meet]').onclick = function () { close(); MINI.open(); };
-      el.querySelector('[data-m=pin]').onclick = function () { close(); pinSheet(); };
+      var bp = el.querySelector('[data-m=pin]'); if (bp) bp.onclick = function () { close(); pinSheet(); };
       var b1 = el.querySelector('[data-m=mine]'); if (b1) b1.onclick = function () { close(); goMine(); };
       var b2 = el.querySelector('[data-m=team]'); if (b2) b2.onclick = function () { close(); goMyTeam(); };
       var b3 = el.querySelector('[data-m=history]'); if (b3) b3.onclick = function () { close(); goHistory(); };
@@ -693,7 +805,7 @@
   }
   // small reminder for agents who signed in with a code and have no PIN yet
   function pinNudge() {
-    return st.me && !st.me.hasPin && !isGM() ? '<div class="pinnudge"><span>🔑 Set a PIN so you can sign in with your name next time.</span><button class="btn gold small" id="setpin">Set PIN</button></div>' : '';
+    return st.me && !st.me.hasPin && !isGM() && !LOGIN ? '<div class="pinnudge"><span>🔑 Set a PIN so you can sign in with your name next time.</span><button class="btn gold small" id="setpin">Set PIN</button></div>' : '';
   }
   // team code box: lets an introducer (or the GM) get new agents to sign themselves up
   function joinBox() {
